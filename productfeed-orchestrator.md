@@ -1,0 +1,371 @@
+---
+name: productfeed-orchestrator
+description: Orchestrate all productfeed enrichment skills on a single feed. Analyzes the feed, detects output language, determines which attributes need enrichment, runs all relevant skills in the correct order, and outputs a single combined supplemental feed. Triggers when user uploads a product feed and asks to "enrich everything", "run all skills", "complete feed enrichment", "volledige feed verrijking", or wants a comprehensive supplemental feed. Use this skill even if the user just says "enrich this feed" or "optimize my feed" with an uploaded file.
+---
+
+# Productfeed Orchestrator
+
+The orchestrator is a **traffic controller** — it doesn't help Claude understand the feed (Claude already understands any language), it tells Claude **what to do** with the information: which output language, which column names, which execution order, which guardrails.
+
+## Role of this skill
+
+- **NOT a translator.** Claude reads Dutch, English, Romanian, German — any language. No vocabulary lists or word-level translation needed for input processing.
+- **A routing controller.** It determines: output language, execution order, dependency chain, column mapping, and quality gates.
+- The individual 25 skills contain the extraction/generation logic. This orchestrator coordinates them.
+
+## Step 1: Load the feed
+
+```python
+import pandas as pd
+import re
+
+file_path = "/mnt/user-data/uploads/<filename>"
+
+# Auto-detect format
+if file_path.endswith('.zip'):
+    import zipfile
+    with zipfile.ZipFile(file_path) as z:
+        inner = z.namelist()[0]
+        if inner.endswith('.tsv'):
+            df = pd.read_csv(z.open(inner), sep='\t', dtype=str)
+        elif inner.endswith('.csv'):
+            df = pd.read_csv(z.open(inner), dtype=str)
+        else:
+            df = pd.read_excel(z.open(inner), dtype=str)
+elif file_path.endswith('.gz'):
+    import gzip
+    with gzip.open(file_path, 'rt') as f:
+        first_line = f.readline()
+    sep = '\t' if '\t' in first_line else ','
+    df = pd.read_csv(file_path, sep=sep, dtype=str, compression='gzip')
+elif file_path.endswith('.csv'):
+    df = pd.read_csv(file_path, dtype=str)
+elif file_path.endswith('.tsv'):
+    df = pd.read_csv(file_path, sep='\t', dtype=str)
+elif file_path.endswith('.xlsx') or file_path.endswith('.xls'):
+    df = pd.read_excel(file_path, dtype=str)
+else:
+    with open(file_path, 'r') as f:
+        first_line = f.readline()
+    if '|' in first_line:
+        df = pd.read_csv(file_path, sep='|', dtype=str)
+    elif '\t' in first_line:
+        df = pd.read_csv(file_path, sep='\t', dtype=str)
+    else:
+        df = pd.read_csv(file_path, dtype=str)
+
+df.columns = [c.strip().lower() for c in df.columns]
+total = len(df)
+```
+
+## Step 2: Detect output language
+
+This does NOT help Claude read the feed — Claude understands any language natively. The purpose is to determine what language the **generated content** should be written in.
+
+The rule: **generated content must match the feed's source language.** A Dutch feed gets Dutch descriptions. An English feed gets English descriptions. You never want a Dutch webshop to suddenly get English titles in their supplemental feed.
+
+```python
+def detect_output_language(df, title_col):
+    """Determine the language for generated content by sampling titles.
+    Claude understands any input language — this only controls OUTPUT language."""
+    sample = ' '.join(df[title_col].dropna().head(100).tolist()).lower()
+
+    # Simple heuristic: count strong language indicators
+    nl_signals = len(re.findall(r'\b(?:de|het|een|van|voor|met|en|uit|bij)\b', sample))
+    en_signals = len(re.findall(r'\b(?:the|a|an|for|with|and|from|by)\b', sample))
+
+    if nl_signals > en_signals:
+        return 'nl'
+    elif en_signals > nl_signals:
+        return 'en'
+    else:
+        return 'en'  # Default to English when unclear
+
+output_lang = detect_output_language(df, title_col)
+```
+
+## Where language matters (and where it doesn't)
+
+There are three categories of output attributes. Language ONLY matters for the third:
+
+### Category 1: Technical attributes — always English, always fixed values
+These are codes/enums that Google Merchant Center expects in English regardless of feed language. Claude outputs these directly, no language logic needed.
+
+| Attribute | Possible values |
+|---|---|
+| `condition` | `new`, `used`, `refurbished` |
+| `gender` | `male`, `female`, `unisex` |
+| `age_group` | `newborn`, `infant`, `toddler`, `kids`, `adult` |
+| `adult` | `true`, `false` |
+| `is_bundle` | `true`, `false` |
+| `identifier_exists` | `true`, `false` |
+| `size_system` | `EU`, `US`, `UK`, `AU` |
+| `size_type` | `regular`, `plus`, `tall`, `petite`, `maternity` |
+| `google_product_category` | numeric ID (e.g., `2831`) |
+
+### Category 2: Extracted attributes — output echoes whatever language the source data is in
+These are extracted verbatim from the feed. If the title says "zwart", color becomes "zwart". If it says "black", color becomes "black". Claude doesn't translate — it extracts.
+
+| Attribute | Example NL | Example EN |
+|---|---|---|
+| `color` | zwart | black |
+| `material` | katoen | cotton |
+| `pattern` | gestreept | striped |
+| `brand` | (same in any language) | (same in any language) |
+| `size` | 500 ml | 500 ml |
+| `product_type` | Kleding > Jassen | Clothing > Jackets |
+| `unit_pricing_measure` | 100g | 100g |
+| `item_group_id` | (derived from data) | (derived from data) |
+
+### Category 3: Generated attributes — must match the detected output language
+These are the ONLY attributes where `output_lang` matters. Claude generates new text and must write it in the same language as the feed.
+
+| Attribute | What `output_lang` controls |
+|---|---|
+| `title` | Optimized/generated titles match source language |
+| `description` | Generated descriptions use NL or EN templates |
+| `short_title` | Strip patterns use NL or EN CTA words |
+| `product_highlight` | Bullet text: "Gemaakt van katoen" vs "Made from cotton" |
+| `product_detail` | Section labels: "Algemeen" vs "General" (note: Google accepts English labels regardless) |
+
+**Pass `output_lang` to these 5 skills.** The other 20 skills ignore it.
+
+## Step 3: Column mapping
+
+Map the feed's actual column names to the standard names that all skills expect.
+
+```python
+COLUMN_CANDIDATES = {
+    'id':               ['id', 'product id', 'unique merchant sku', 'merchant item id', 'sku', 'item_id', 'g:id'],
+    'title':            ['title', 'titel', 'product name', 'product_name', 'name', 'g:title'],
+    'description':      ['description', 'beschrijving', 'product description', 'product_description', 'g:description'],
+    'brand':            ['brand', 'merk', 'manufacturer', 'mfr', 'vendor', 'g:brand'],
+    'color':            ['color', 'kleur', 'colour', 'g:color'],
+    'material':         ['material', 'materiaal', 'g:material'],
+    'size':             ['size', 'grootte', 'maat', 'g:size'],
+    'size_system':      ['size_system', 'matensysteem', 'g:size_system'],
+    'size_type':        ['size_type', 'maattype', 'g:size_type'],
+    'gender':           ['gender', 'geslacht', 'g:gender'],
+    'age_group':        ['age_group', 'leeftijdsgroep', 'g:age_group'],
+    'pattern':          ['pattern', 'patroon', 'g:pattern'],
+    'condition':        ['condition', 'staat', 'g:condition'],
+    'adult':            ['adult', 'inhoud voor volwassenen', 'g:adult'],
+    'is_bundle':        ['is_bundle', 'is pakket', 'bundle', 'g:is_bundle'],
+    'multipack':        ['multipack', 'g:multipack'],
+    'identifier_exists':['identifier_exists', 'id bestaat', 'g:identifier_exists'],
+    'google_product_category': ['google_product_category', 'google productcategorie', 'g:google_product_category'],
+    'product_type':     ['product_type', 'producttype', 'product web category', 'product purchasing category'],
+    'item_group_id':    ['item_group_id', 'groeps id', 'parent sku', 'parent_sku', 'g:item_group_id'],
+    'product_highlight':['product_highlight', 'product highlight'],
+    'product_detail':   ['product_detail', 'product detail'],
+    'short_title':      ['short_title', 'korte titel'],
+    'image_link':       ['image_link', 'afbeeldingslink', 'product image', 'image_url'],
+    'link':             ['link', 'product url', 'url', 'product_url'],
+    'price':            ['price', 'prijs', 'product value', 'current price'],
+    'availability':     ['availability', 'beschikbaarheid', 'stock availability'],
+    'gtin':             ['gtin', 'ean', 'upc', 'isbn', 'barcode'],
+    'mpn':              ['mpn', 'manufacturer_part_number'],
+    'labels':           ['labels', 'aangepast label 1', 'custom_label_0'],
+    'weight':           ['product_weight', 'verzendgewicht', 'shipping weight', 'product weight', 'weight'],
+    'bullet1':          ['product bullet point 1'],
+    'bullet2':          ['product bullet point 2'],
+    'bullet3':          ['product bullet point 3'],
+    'unit_pricing_measure': ['unit_pricing_measure', 'eenheidsprijs hoeveelheid'],
+    'unit_pricing_base_measure': ['unit_pricing_base_measure', 'eenheidsprijs basishoeveelheid'],
+}
+
+def map_columns(df):
+    """Map feed columns to standard names. Returns dict {standard_name: actual_col_name}."""
+    col_map = {}
+    df_cols_lower = {c.lower(): c for c in df.columns}
+    for standard_name, candidates in COLUMN_CANDIDATES.items():
+        for candidate in candidates:
+            if candidate.lower() in df_cols_lower:
+                col_map[standard_name] = df_cols_lower[candidate.lower()]
+                break
+    return col_map
+
+col_map = map_columns(df)
+```
+
+## Step 4: Feed analysis
+
+Analyze the current state of the feed before running skills.
+
+```python
+def analyze_feed(df, col_map, total):
+    """Report fill rates per attribute."""
+    report = {}
+    for attr, col in col_map.items():
+        filled = df[col].notna() & (df[col].str.strip() != '') & (df[col].str.lower() != 'nan')
+        report[attr] = {
+            'column': col,
+            'filled': filled.sum(),
+            'empty': total - filled.sum(),
+            'fill_pct': round(filled.sum() / total * 100, 1),
+        }
+    return report
+
+feed_report = analyze_feed(df, col_map, total)
+```
+
+Present a summary to the user BEFORE running skills:
+- Total products
+- Detected output language and why
+- Columns found with fill rates
+- Columns missing entirely (= skills that will generate from scratch)
+- Ask user to confirm before proceeding
+
+## Step 5: Execution order
+
+Skills run in 4 phases. Each phase depends on results from the previous phase.
+
+```
+Phase 1 — EXTRACTION (14 skills, independent)
+  ┌─ brand          ← manufacturer/title first-word
+  ├─ color          ← title/description/labels
+  ├─ material       ← title/description/labels
+  ├─ gender         ← title/product_type
+  ├─ age_group      ← title/product_type
+  ├─ pattern        ← title/description/labels
+  ├─ condition      ← title/description (default: new)
+  ├─ adult          ← title/category (default: false)
+  ├─ is_bundle      ← title/description (default: false)
+  ├─ multipack      ← title/description
+  ├─ size           ← title/description (metric-first!)
+  ├─ unit_pricing   ← title/description (metric-first!)
+  ├─ energy_eff     ← title/description
+  └─ dimensions     ← title/description
+
+Phase 2 — DEPENDENT EXTRACTION (3 skills, need Phase 1)
+  ├─ size_system    ← needs: size (only if size exists)
+  ├─ size_type      ← needs: size (only if size exists)
+  └─ identifier_exists ← needs: brand + gtin + mpn
+
+Phase 3 — CLASSIFICATION (3 skills, improved by Phase 1)
+  ├─ google_product_category ← title + product_type + brand
+  ├─ product_type            ← title + category + url + brand
+  └─ item_group_id           ← sku + title + color + size + material
+
+Phase 4 — GENERATIVE (5 skills, need all previous + output_lang)
+  ├─ title             ← title + brand/color/size           [output_lang]  ← FIRST: optimize/generate
+  ├─ short_title       ← title (strips variants)           [output_lang]  ← THEN: shorten the (now better) title
+  ├─ product_highlight ← all attributes + improved title    [output_lang]
+  ├─ product_detail    ← all attributes                     [output_lang]
+  └─ description       ← all attributes + improved title    [output_lang]  ← LAST: uses everything
+```
+
+## Step 6: Running the skills
+
+**The orchestrator does NOT reimplement skill logic.** For each skill, read and follow the corresponding `productfeed-<attribute>/SKILL.md` instructions. The orchestrator's job:
+
+1. **Route**: determine which skills to run based on feed analysis
+2. **Order**: execute skills in the correct phase sequence
+3. **Wire**: pass the right source columns from `col_map` to each skill
+4. **Language**: pass `output_lang` to Phase 4 generative skills only
+5. **Collect**: gather all output values for the combined supplemental feed
+
+For each skill:
+
+```python
+# Phase 1-3: no language parameter needed
+# Follow the skill's SKILL.md extraction logic exactly
+size_value = extract_size(title, description, product_type, labels)
+
+# Phase 4: pass output_lang to generative skills
+description_value = generate_description(info, lang=output_lang)
+highlights_value = generate_highlights(context, lang=output_lang)
+```
+
+## Step 7: Build supplemental feed
+
+```python
+# All 35 output columns with Google Merchant Center attribute names
+OUTPUT_COLUMNS = [
+    # Phase 1: Extraction
+    'color', 'material', 'brand', 'gender', 'age_group', 'pattern',
+    'condition', 'adult', 'is_bundle', 'multipack', 'size',
+    'unit_pricing_measure', 'unit_pricing_base_measure',
+    'energy_efficiency_class', 'min_energy_efficiency_class', 'max_energy_efficiency_class',
+    'product_weight', 'product_length', 'product_width', 'product_height',
+    'shipping_weight', 'shipping_length', 'shipping_width', 'shipping_height',
+    # Phase 2: Dependent
+    'size_system', 'size_type', 'identifier_exists',
+    # Phase 3: Classification
+    'google_product_category', 'product_type', 'item_group_id',
+    # Phase 4: Generative (title first, then short_title from improved title)
+    'title', 'short_title', 'product_highlight', 'product_detail', 'description',
+]
+
+supplemental = pd.DataFrame({'id': df[col_map['id']]})
+for col in OUTPUT_COLUMNS:
+    supplemental[col] = enriched_values[col]
+
+output_path = "/mnt/user-data/outputs/supplemental_feed_complete.xlsx"
+supplemental.to_excel(output_path, index=False)
+```
+
+## Step 8: Quality report
+
+Present AFTER running all skills:
+
+```
+══════════════════════════════════════════════════════
+  FEED ENRICHMENT REPORT
+══════════════════════════════════════════════════════
+
+  Feed:      <filename>
+  Products:  <total>
+  Output language: <NL/EN> (detected from titles)
+
+  ── FILL RATES ──────────────────────────────────────
+                              BEFORE    AFTER    CHANGE
+  brand                       50.3%   100.0%   +49.7%
+  color                       12.5%    78.3%   +65.8%
+  size                         0.0%    79.3%   +79.3%
+  condition                    0.0%   100.0%  +100.0%
+  ...
+
+  ── SKILLS EXECUTED ─────────────────────────────────
+  Phase 1 (Extraction):    14 skills
+  Phase 2 (Dependent):      3 skills
+  Phase 3 (Classification): 3 skills
+  Phase 4 (Generative):     5 skills (output_lang = NL)
+
+  ── SPOT CHECK (10 random samples) ─────────────────
+  [show 10 random products with before/after comparison]
+
+  ── QUALITY FLAGS ───────────────────────────────────
+  ⚠️ 120 products: no color extracted (no color info in title)
+  ⚠️ 30 titles optimized (score < 60 → review recommended)
+  ⚠️ item_group_id via title normalization (medium confidence)
+
+  ── OUTPUT ──────────────────────────────────────────
+  File: supplemental_feed_complete.xlsx
+  Columns: id + 35 attributes
+  Products: <total> (all included, empty cells where unresolved)
+══════════════════════════════════════════════════════
+```
+
+## Key rules
+
+1. **The orchestrator is a traffic controller, not a translator.** It routes data and controls output language — it does not help Claude understand input.
+2. **Language detection controls output only.** It determines which templates/patterns Phase 4 generative skills use. Phase 1-3 skills ignore it.
+3. **Column mapping is flexible.** Handles NL, EN, g:-prefixed, and vendor-specific column names.
+4. **Execution order is strict.** Phase 1 → 2 → 3 → 4. Dependencies flow downward.
+5. **Never reimplement skill logic.** Read each skill's SKILL.md and follow it. The orchestrator coordinates, the skills execute.
+6. **All products in output.** Empty cells where no enrichment was possible.
+7. **English column names always.** Google Merchant Center attribute names regardless of feed language.
+8. **Metric-first.** For size and unit_pricing, always prefer metric (g, ml, kg) over imperial (oz, lb).
+9. **Conservative on generation.** Titles only optimized if score < 60. Descriptions only generated/expanded if < 150 chars or empty.
+10. **Show before/after.** Always present spot-check examples so the user can verify quality.
+
+## Guardrails inherited from skills
+
+The orchestrator inherits all guardrails from the 25 individual skills:
+
+- **Never overwrite good data.** 23 of 25 skills skip products with existing values. Only `title` (score < 60) and `description` (< 150 chars) may modify existing values.
+- **Metric over imperial.** Size and unit_pricing always prefer metric when both are present.
+- **No false positives on multipack.** Dosage counts (60 capsules, 100 tablets) are NOT multipacks. The `Nx` pattern excludes dosage phrases (3x daily, 3x daags).
+- **Generated content matches feed language.** A Dutch feed never gets English generated text. An English feed never gets Dutch generated text.
+- **Technical values always English.** `condition`, `gender`, `age_group`, `adult`, `is_bundle`, `identifier_exists`, `size_system`, `size_type` — always English enum values regardless of feed language.
