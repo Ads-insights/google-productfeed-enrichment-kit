@@ -194,16 +194,6 @@ This kit enriches feeds on demand — but new products get added all the time. Y
 
 ---
 
-## About
-
-Built by **Tim** at **[Ads & Insights](https://adsinsights.nl)** — Freelance Google Ads & eCommerce Specialist based in the Netherlands.
-
-**Need help with Google Ads or feed management?**
-→ [adsinsights.nl](https://adsinsights.nl)
-→ [LinkedIn](https://www.linkedin.com/in/timoudejans/)
-
----
-
 ## Requirements
  
 - **Claude Pro, Team, or Enterprise subscription** — Skills are not available on the free Claude plan.
@@ -213,6 +203,16 @@ Built by **Tim** at **[Ads & Insights](https://adsinsights.nl)** — Freelance G
 ## Disclaimer
  
 This kit is provided as-is. While tested on multiple feeds across different verticals and languages, **edge cases may occur** — especially with unusual product titles, non-standard feed formats, or niche product categories. Always spot-check the output before uploading to Google Merchant Center. The skills are conservative by design (they won't overwrite good data or hallucinate attributes), but a manual review of a sample of enriched products is recommended.
+
+---
+
+## About
+
+Built by **Tim** at **[Ads & Insights](https://adsinsights.nl)** — Freelance Google Ads & eCommerce Specialist based in the Netherlands.
+
+**Need help with Google Ads or feed management?**
+→ [adsinsights.nl](https://adsinsights.nl)
+→ [LinkedIn](https://www.linkedin.com/in/timoudejans/)
 
 ---
 
