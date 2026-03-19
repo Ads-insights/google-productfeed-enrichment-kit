@@ -132,7 +132,7 @@ Phase 4 — GENERATIVE (5 skills, need all previous)
 
 | Skill | Attribute(s) |
 |---|---|
-| [`productfeed-brand`](./skills/productfeed-brand.md) | `brand` |
+| [`productfeed-brand`](productfeed-brand.md) | `brand` |
 | [`productfeed-color`](./skills/productfeed-color.md) | `color` |
 | [`productfeed-material`](./skills/productfeed-material.md) | `material` |
 | [`productfeed-gender`](./skills/productfeed-gender.md) | `gender` |
