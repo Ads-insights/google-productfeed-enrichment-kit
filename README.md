@@ -63,14 +63,21 @@ No code. No API setup. No spreadsheet formulas. Just upload and go.
 ---
 
 ## Quick Start
-
+ 
+> **Requires a Claude Pro, Team, or Enterprise subscription.** Skills are not available on the free plan.
+ 
 ### 1. Install the skills
-
+ 
 Go to **[claude.ai](https://claude.ai)** → **Customize** → **Skills**
-
-For each skill folder, create a new Claude skill and paste the contents of the `SKILL.md` file.
-
-**Start with the orchestrator:** [`skills/productfeed-orchestrator.md`](productfeed-orchestrator.md)
+ 
+For each of the 26 `.md` files in this repository:
+1. Click the **+** button → **Upload a skill**
+2. Open the `.md` file from this repo (or copy-paste its contents)
+3. Save
+ 
+**Install all 26 for the best results.** The orchestrator coordinates them, but each skill handles a specific attribute. You can also pick and choose — if you only need colors and materials, just install those two skills.
+ 
+**The orchestrator is key:** [`productfeed-orchestrator.md`](./productfeed-orchestrator.md) — install this one first, it runs all other installed skills in the correct order.
 
 ### 2. Upload a feed
 
