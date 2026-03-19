@@ -204,6 +204,18 @@ Built by **Tim** at **[Ads & Insights](https://adsinsights.nl)** — Freelance G
 
 ---
 
+## Requirements
+ 
+- **Claude Pro, Team, or Enterprise subscription** — Skills are not available on the free Claude plan.
+ 
+---
+ 
+## Disclaimer
+ 
+This kit is provided as-is. While tested on multiple feeds across different verticals and languages, **edge cases may occur** — especially with unusual product titles, non-standard feed formats, or niche product categories. Always spot-check the output before uploading to Google Merchant Center. The skills are conservative by design (they won't overwrite good data or hallucinate attributes), but a manual review of a sample of enriched products is recommended.
+
+---
+
 ## License
 
 MIT — Free to use, modify, and distribute.
