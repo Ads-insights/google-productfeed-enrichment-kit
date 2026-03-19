@@ -35,8 +35,8 @@ Examples:
 - Full title: "Samsung Galaxy S24 Ultra 256GB Smartphone Titanium Blue"  
 - Short title: "Samsung Galaxy S24 Ultra 256GB"
 
-- Full title: "Premium Urn | ELAN – Handgemaakt kristalglas ornament Olive Green (0.5 liter)"
-- Short title: "ELAN Kristalglas Urn 0.5L"
+- Full title: "Nike Air Max 90 | Sportshop – Heren Sneakers Wit/Zwart (Maat 43)"
+- Short title: "Nike Air Max 90 Heren Sneakers"
 
 ## Workflow
 
@@ -83,8 +83,8 @@ VARIANT_PATTERNS = [
     r'\s*\|[^|]*$',
     # Content in parentheses at end (often variant info or shop name)
     r'\s*\([^)]*\)\s*$',
-    # "- Urn kopen" / "| Memoriva" / "- Buy Now" type suffixes
-    r'\s*[-–—]\s*(?:Urn kopen|Memoriva|Shop|Webshop|Online|Kopen|Bestellen|Buy now|Order|Free shipping|Official).*$',
+    # "- Buy Now" / "| Shop" type suffixes
+    r'\s*[-–—]\s*(?:Shop|Webshop|Online|Kopen|Bestellen|Buy now|Order|Free shipping|Official).*$',
     # Slash-separated colors: "Zwart/Wit"
     r'\b\w+/\w+\b',
 ]
@@ -106,8 +106,8 @@ def generate_short_title(title, brand='', product_type=''):
 
     # Step 1: Remove common suffixes (shop name, CTA's — NL and EN)
     # NL patterns
-    short = re.sub(r'\s*\|\s*(?:Memoriva|Shop|Webshop|Winkel).*$', '', short, flags=re.I)
-    short = re.sub(r'\s*[-–—]\s*(?:Urn kopen|Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', short, flags=re.I)
+    short = re.sub(r'\s*\|\s*(?:Shop|Webshop|Winkel|Store).*$', '', short, flags=re.I)
+    short = re.sub(r'\s*[-–—]\s*(?:Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', short, flags=re.I)
     # EN patterns
     short = re.sub(r'\s*[-–—]\s*(?:Buy now|Shop now|Order now|Buy online|Free shipping|Official store).*$', '', short, flags=re.I)
     short = re.sub(r'\s*\|\s*(?:Official|Store|Shop|Online).*$', '', short, flags=re.I)

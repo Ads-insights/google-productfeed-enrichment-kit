@@ -78,7 +78,7 @@ This is a CLASSIFICATION skill — it maps products to a fixed taxonomy. The app
 If some products already have a google_product_category, build a mapping from product_type/title keywords to categories. Apply this mapping to uncategorized products with similar characteristics.
 
 **Layer 2: Map from product_type**
-The product_type field often contains a merchant's own category hierarchy (e.g., "Urnen > Kristalglas > Mini-urnen"). Map these to the nearest Google taxonomy category.
+The product_type field often contains a merchant's own category hierarchy (e.g., "Wonen > Verlichting > Tafellampen"). Map these to the nearest Google taxonomy category.
 
 **Layer 3: Keyword-based classification from title + description**
 Use keyword matching against a curated mapping of common product keywords to Google taxonomy categories.
@@ -172,7 +172,7 @@ KEYWORD_CATEGORY_MAP = [
      553, 'Baby & Toddler > Diapering'),
 
     # Arts & Crafts / Memorial
-    (['urn', 'urne', 'urnen', 'crematie', 'as-', 'gedenkornament'],
+    (['candle', 'kaars', 'waxmelt', 'geurkaars', 'scented candle'],
      3580, 'Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts'),
 
     # Pet Supplies

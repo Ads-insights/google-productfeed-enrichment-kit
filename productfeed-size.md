@@ -187,7 +187,7 @@ Present summary with fill rate before/after, sample of filled values, and unreso
 - Never overwrite existing values
 - Be careful with numbers that could be model numbers, not sizes (e.g., "Samsung S24" — S24 is not a size)
 - **Dosages (mg, mcg) are valid as size for supplements** — "500 mg" is a meaningful product size for vitamins/supplements
-- Volume sizes (ml, L) are valid for non-clothing products (urns, bottles, containers)
+- Volume sizes (ml, L) are valid for non-clothing products (bottles, candles, containers)
 - When a title contains both a volume and a letter size, prefer the more product-relevant one
 - "One size" / "one size fits all" / "OSFA" → output as `one size`
 - Products without any size concept (electronics, digital) — leave blank

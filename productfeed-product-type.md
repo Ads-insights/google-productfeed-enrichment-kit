@@ -21,7 +21,7 @@ The `[product_type]` attribute is recommended and high-impact in Google Shopping
 **Format**: Free text with `>` as level separator (spaces before and after `>`)
 - Example: `Home > Women > Dresses > Maxi Dresses`
 - Example: `Electronics > Smartphones > Samsung`
-- Example: `Urnen > Kristalglas > Mini-urnen`
+- Example: `Wonen > Verlichting > Tafellampen`
 
 **Key rules:**
 - Use `>` to separate levels (with a space before and after)

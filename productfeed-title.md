@@ -57,7 +57,7 @@ Example: "Douwe Egberts Aroma Rood Koffiepads 36 stuks"
 
 **Sports & Outdoors:**
 `Brand + Product Type + Key Feature + Variant`
-Example: "Fiido X Elektrische Fiets 130km Bereik Zwart"
+Example: "Bosch Serie 6 Vaatwasser Vrijstaand RVS"
 
 **Baby & Kids:**
 `Brand + Product Type + Age Range + Key Feature`
@@ -69,7 +69,7 @@ Example: "Harry Potter en de Steen der Wijzen - J.K. Rowling - Paperback"
 
 **Arts & Crafts / Memorial / Specialty:**
 `Brand/Collection + Product Type + Key Feature + Size/Variant`
-Example: "ELAN Premium Kristalglas Urn Handgemaakt 0.5L"
+Example: "KitchenAid Artisan Standmixer 4.8L Rood"
 
 **Generic/Other:**
 `Brand + Product Type + Key Differentiator + Variant`
@@ -123,7 +123,7 @@ def detect_vertical(product_type, google_category, title):
         'sports': ['sport', 'fitness', 'bike', 'fiets', 'outdoor', 'e-bike'],
         'baby': ['baby', 'toddler', 'peuter', 'kinder', 'kids'],
         'books': ['book', 'boek', 'media', 'dvd', 'cd', 'vinyl'],
-        'memorial': ['urn', 'urne', 'crematie', 'memorial', 'gedenk', 'as-'],
+        'specialty': ['candle', 'kaars', 'gift', 'cadeau', 'decoration', 'decoratie'],
     }
 
     for vertical, keywords in verticals.items():
@@ -166,7 +166,7 @@ def score_title(title, brand='', color='', size='', material='', vertical='gener
     if color_str and color_str not in ['', 'nan']:
         if color_str in title_str.lower():
             score += 5
-        elif vertical in ['apparel', 'home', 'memorial']:
+        elif vertical in ['apparel', 'home', 'specialty']:
             score -= 5
             issues.append('missing_color')
 
@@ -252,7 +252,7 @@ def build_optimized_title(title, brand='', color='', size='', material='',
     # Step 1: Remove shop name suffixes (NL + EN)
     optimized = re.sub(r'\s*\|\s*[^|]+$', '', optimized)
     # NL suffixes
-    optimized = re.sub(r'\s*[-–—]\s*(?:Urn kopen|Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', optimized, flags=re.I)
+    optimized = re.sub(r'\s*[-–—]\s*(?:Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', optimized, flags=re.I)
     # EN suffixes
     optimized = re.sub(r'\s*[-–—]\s*(?:Buy now|Shop now|Order now|Buy online|Official store|Free delivery).*$', '', optimized, flags=re.I)
 
@@ -271,7 +271,7 @@ def build_optimized_title(title, brand='', color='', size='', material='',
     # Step 5: Add missing color (for relevant verticals)
     if color_str and color_str.lower() not in ['nan', 'none', '']:
         if color_str.lower() not in optimized.lower():
-            if vertical in ['apparel', 'home', 'memorial', 'sports']:
+            if vertical in ['apparel', 'home', 'specialty', 'sports']:
                 optimized = f"{optimized} {color_str}"
 
     # Step 6: Add missing size (for apparel)

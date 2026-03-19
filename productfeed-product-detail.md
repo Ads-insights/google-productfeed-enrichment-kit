@@ -183,7 +183,7 @@ def build_specs_from_attributes(context):
     Only include specs NOT already covered by standard attributes."""
     specs = []
 
-    # Volume/capacity from title (for products like urns, bottles)
+    # Volume/capacity from title (for products like bottles, candles)
     title = context.get('title', '')
     vol_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(?:ml|l|liter|L)\b', str(title), re.I)
     if vol_match:
