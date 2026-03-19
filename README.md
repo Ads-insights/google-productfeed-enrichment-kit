@@ -68,9 +68,9 @@ No code. No API setup. No spreadsheet formulas. Just upload and go.
 
 Go to **[claude.ai](https://claude.ai)** → **Settings** → **Skills**
 
-For each skill folder in [`/skills`](./skills/), create a new skill and paste the contents of the `SKILL.md` file.
+For each skill folder, create a new Claude skill and paste the contents of the `SKILL.md` file.
 
-**Start with the orchestrator:** [`skills/productfeed-orchestrator.md`](./skills/productfeed-orchestrator.md)
+**Start with the orchestrator:** [`skills/productfeed-orchestrator.md`](productfeed-orchestrator.md)
 
 ### 2. Upload a feed
 
@@ -126,52 +126,52 @@ Phase 4 — GENERATIVE (5 skills, need all previous)
 
 | Skill | Description |
 |---|---|
-| [`productfeed-orchestrator`](./skills/productfeed-orchestrator.md) | Master controller — runs all 25 skills in dependency order |
+| [`productfeed-orchestrator`](productfeed-orchestrator.md) | Master controller — runs all 25 skills in dependency order |
 
 ### Phase 1: Extraction
 
 | Skill | Attribute(s) |
 |---|---|
 | [`productfeed-brand`](productfeed-brand.md) | `brand` |
-| [`productfeed-color`](./skills/productfeed-color.md) | `color` |
-| [`productfeed-material`](./skills/productfeed-material.md) | `material` |
-| [`productfeed-gender`](./skills/productfeed-gender.md) | `gender` |
-| [`productfeed-age-group`](./skills/productfeed-age-group.md) | `age_group` |
-| [`productfeed-pattern`](./skills/productfeed-pattern.md) | `pattern` |
-| [`productfeed-condition`](./skills/productfeed-condition.md) | `condition` |
-| [`productfeed-adult`](./skills/productfeed-adult.md) | `adult` |
-| [`productfeed-is-bundle`](./skills/productfeed-is-bundle.md) | `is_bundle` |
-| [`productfeed-multipack`](./skills/productfeed-multipack.md) | `multipack` |
-| [`productfeed-size`](./skills/productfeed-size.md) | `size` |
-| [`productfeed-unit-pricing`](./skills/productfeed-unit-pricing.md) | `unit_pricing_measure` + `unit_pricing_base_measure` |
-| [`productfeed-energy-efficiency`](./skills/productfeed-energy-efficiency.md) | `energy_efficiency_class` (+ min/max) |
-| [`productfeed-dimensions`](./skills/productfeed-dimensions.md) | weight / length / width / height (product + shipping) |
+| [`productfeed-color`](productfeed-color.md) | `color` |
+| [`productfeed-material`](productfeed-material.md) | `material` |
+| [`productfeed-gender`](productfeed-gender.md) | `gender` |
+| [`productfeed-age-group`](productfeed-age-group.md) | `age_group` |
+| [`productfeed-pattern`](productfeed-pattern.md) | `pattern` |
+| [`productfeed-condition`](productfeed-condition.md) | `condition` |
+| [`productfeed-adult`](productfeed-adult.md) | `adult` |
+| [`productfeed-is-bundle`](productfeed-is-bundle.md) | `is_bundle` |
+| [`productfeed-multipack`](productfeed-multipack.md) | `multipack` |
+| [`productfeed-size`](productfeed-size.md) | `size` |
+| [`productfeed-unit-pricing`](productfeed-unit-pricing.md) | `unit_pricing_measure` + `unit_pricing_base_measure` |
+| [`productfeed-energy-efficiency`](productfeed-energy-efficiency.md) | `energy_efficiency_class` (+ min/max) |
+| [`productfeed-dimensions`](productfeed-dimensions.md) | weight / length / width / height (product + shipping) |
 
 ### Phase 2: Dependent
 
 | Skill | Attribute(s) | Depends on |
 |---|---|---|
-| [`productfeed-size-system`](./skills/productfeed-size-system.md) | `size_system` | size |
-| [`productfeed-size-type`](./skills/productfeed-size-type.md) | `size_type` | size |
-| [`productfeed-identifier-exists`](./skills/productfeed-identifier-exists.md) | `identifier_exists` | brand, gtin, mpn |
+| [`productfeed-size-system`](productfeed-size-system.md) | `size_system` | size |
+| [`productfeed-size-type`](productfeed-size-type.md) | `size_type` | size |
+| [`productfeed-identifier-exists`](productfeed-identifier-exists.md) | `identifier_exists` | brand, gtin, mpn |
 
 ### Phase 3: Classification
 
 | Skill | Attribute(s) |
 |---|---|
-| [`productfeed-google-product-category`](./skills/productfeed-google-product-category.md) | `google_product_category` |
-| [`productfeed-product-type`](./skills/productfeed-product-type.md) | `product_type` |
-| [`productfeed-item-group-id`](./skills/productfeed-item-group-id.md) | `item_group_id` |
+| [`productfeed-google-product-category`](productfeed-google-product-category.md) | `google_product_category` |
+| [`productfeed-product-type`](productfeed-product-type.md) | `product_type` |
+| [`productfeed-item-group-id`](productfeed-item-group-id.md) | `item_group_id` |
 
 ### Phase 4: Generative
 
 | Skill | Attribute(s) |
 |---|---|
-| [`productfeed-title`](./skills/productfeed-title.md) | `title` |
-| [`productfeed-short-title`](./skills/productfeed-short-title.md) | `short_title` |
-| [`productfeed-product-highlight`](./skills/productfeed-product-highlight.md) | `product_highlight` |
-| [`productfeed-product-detail`](./skills/productfeed-product-detail.md) | `product_detail` |
-| [`productfeed-description`](./skills/productfeed-description.md) | `description` |
+| [`productfeed-title`](productfeed-title.md) | `title` |
+| [`productfeed-short-title`](productfeed-short-title.md) | `short_title` |
+| [`productfeed-product-highlight`](productfeed-product-highlight.md) | `product_highlight` |
+| [`productfeed-product-detail`](productfeed-product-detail.md) | `product_detail` |
+| [`productfeed-description`](productfeed-description.md) | `description` |
 
 ---
 
