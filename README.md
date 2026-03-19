@@ -66,7 +66,7 @@ No code. No API setup. No spreadsheet formulas. Just upload and go.
 
 ### 1. Install the skills
 
-Go to **[claude.ai](https://claude.ai)** → **Settings** → **Skills**
+Go to **[claude.ai](https://claude.ai)** → **Customize** → **Skills**
 
 For each skill folder, create a new Claude skill and paste the contents of the `SKILL.md` file.
 
