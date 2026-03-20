@@ -347,6 +347,27 @@ for idx, row in supplemental.iterrows():
         validation_flags.append((product_id, 'gender_mismatch', f"gender=male but title/product_type suggests female"))
         supplemental.at[idx, 'gender'] = ''
 
+    # ── CHECK 3b: age_group vs title coherence ──
+    # If the title clearly contains child-related words but age_group is 'adult', correct it.
+    # This catches cases where the SOURCE FEED has wrong age_group values that the skill
+    # preserved (because the skill respects existing values). The orchestrator overrides
+    # because title evidence is stronger than a likely-incorrect feed value.
+    # The same applies to baby/infant products.
+    age = str(row.get('age_group', '')).lower().strip()
+    title_lower = str(row.get('title', '')).lower()
+    if age == 'adult' or not age:
+        # Check for child product signals in title
+        has_kinder = bool(re.search(r'\bkinder[-\s]|\bfür\s+kinder\b|\bkids\b|\bchildren\b', title_lower))
+        has_baby = bool(re.search(r'\bbaby[-\s]|\bbébé\b|\bsäugling\b|\bneugeboren\b|\bnewborn\b', title_lower))
+        if has_baby:
+            supplemental.at[idx, 'age_group'] = 'infant'
+            if age == 'adult':
+                validation_flags.append((product_id, 'age_title_mismatch', f"age_group=adult but title contains baby signal → corrected to infant"))
+        elif has_kinder:
+            supplemental.at[idx, 'age_group'] = 'kids'
+            if age == 'adult':
+                validation_flags.append((product_id, 'age_title_mismatch', f"age_group=adult but title contains kinder signal → corrected to kids"))
+
     # ── CHECK 4: google_product_category exists and is numeric ──
     gpc = str(row.get('google_product_category', '')).strip()
     if gpc:
@@ -397,6 +418,7 @@ for flag_type, count in Counter(f[1] for f in validation_flags).items():
 | 1 | size contains units (ml, g, capsule, etc.) → size_system/size_type should be empty | Auto-clear | size_system=EU on "500ml" makes no sense |
 | 2 | age_group is baby/toddler → gender should be empty | Auto-clear | Google doesn't require gender for babies |
 | 3 | gender contradicts title/product_type | Auto-clear + flag | Wrong gender = worse than no gender |
+| 3b | age_group=adult but title contains "Kinder-"/"Baby-" | Auto-correct to kids/infant + flag | Source feed has wrong age_group; title evidence is stronger |
 | 4 | GPC is non-numeric | Auto-clear + flag | Google requires numeric ID |
 | 5 | Child age_group + adult-only GPC | Auto-clear + flag | Prevents Merchant Center disapproval |
 | 6 | is_bundle=true AND multipack set | Keep multipack, clear bundle + flag | Mutually exclusive per Google spec |
