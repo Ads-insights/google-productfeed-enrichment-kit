@@ -305,6 +305,105 @@ output_path = "/mnt/user-data/outputs/supplemental_feed_complete.xlsx"
 supplemental.to_excel(output_path, index=False)
 ```
 
+## Step 7.5: Post-enrichment validation
+
+After all 25 skills have run and the supplemental feed is assembled, run these cross-attribute sanity checks. These are pure logical checks on the output — language-independent, vertical-independent. They catch contradictions between attributes that no individual skill can detect on its own.
+
+**The orchestrator fixes what it can automatically, and flags the rest in the quality report.**
+
+```python
+validation_flags = []
+
+for idx, row in supplemental.iterrows():
+    product_id = row['id']
+
+    # ── CHECK 1: size_system / size_type only when size is meaningful sizing ──
+    # size_system and size_type are for clothing/shoe sizing only.
+    # If size contains metric units (ml, g, kg, cm, l) or count units (capsule, stuks, bustine),
+    # it's a product measurement, not a garment size → clear size_system and size_type.
+    size_val = str(row.get('size', '')).lower().strip()
+    if size_val and re.search(r'\d+\s*(ml|cl|l|g|gr|kg|mg|cm|mm|m|oz|lb|capsul|bustin|porzioni|porties|stuks|tabletten|druppels)\b', size_val):
+        supplemental.at[idx, 'size_system'] = ''
+        supplemental.at[idx, 'size_type'] = ''
+
+    # ── CHECK 2: gender + age_group coherence ──
+    # Products with age_group in (newborn, infant, toddler) should not have gender set.
+    # Google does not require gender for baby products, and assigning it is usually a guess.
+    age = str(row.get('age_group', '')).lower().strip()
+    if age in ('newborn', 'infant', 'toddler'):
+        if str(row.get('gender', '')).strip():
+            supplemental.at[idx, 'gender'] = ''
+
+    # ── CHECK 3: gender vs product_type / title coherence ──
+    # If the product_type or title clearly indicates one gender, but gender says another, flag it.
+    gender = str(row.get('gender', '')).lower().strip()
+    product_type = str(row.get('product_type', '')).lower()
+    title = str(row.get('title', '')).lower()
+    context = f"{product_type} {title}"
+    if gender == 'female' and any(w in context for w in ['heren', '/heren/', 'men ', 'uomo', 'herren']):
+        validation_flags.append((product_id, 'gender_mismatch', f"gender=female but title/product_type suggests male"))
+        supplemental.at[idx, 'gender'] = ''  # Clear rather than guess wrong
+    if gender == 'male' and any(w in context for w in ['dames', '/dames/', 'women', 'donna', 'damen']):
+        validation_flags.append((product_id, 'gender_mismatch', f"gender=male but title/product_type suggests female"))
+        supplemental.at[idx, 'gender'] = ''
+
+    # ── CHECK 4: google_product_category exists and is numeric ──
+    gpc = str(row.get('google_product_category', '')).strip()
+    if gpc:
+        if not gpc.isdigit():
+            validation_flags.append((product_id, 'gpc_not_numeric', f"GPC value '{gpc}' is not a numeric ID"))
+            supplemental.at[idx, 'google_product_category'] = ''
+
+    # ── CHECK 5: age_group vs google_product_category coherence ──
+    # If age_group is kids/infant/toddler/newborn, GPC should not be in adult-only categories.
+    # Lingerie (GPC 212, 213, 1772), Adult content categories → mismatch with child age_groups.
+    ADULT_ONLY_GPC = {'212', '213', '1772', '5713'}  # Bras, underwear, lingerie, nightwear
+    if age in ('kids', 'infant', 'toddler', 'newborn') and gpc in ADULT_ONLY_GPC:
+        validation_flags.append((product_id, 'gpc_age_mismatch', f"age_group={age} but GPC={gpc} is adult-only category"))
+        supplemental.at[idx, 'google_product_category'] = ''  # Clear — better no GPC than wrong GPC
+
+    # ── CHECK 6: is_bundle and multipack mutual exclusivity ──
+    # A product should not be both a bundle AND a multipack. If both are set, prefer multipack
+    # (more common, more specific) and clear is_bundle.
+    is_bundle = str(row.get('is_bundle', '')).lower().strip()
+    multipack = str(row.get('multipack', '')).strip()
+    if is_bundle == 'true' and multipack:
+        supplemental.at[idx, 'is_bundle'] = 'false'
+        validation_flags.append((product_id, 'bundle_multipack_conflict', f"Both is_bundle=true and multipack={multipack} — kept multipack, cleared bundle"))
+
+    # ── CHECK 7: identifier_exists coherence ──
+    # If identifier_exists=true, at least one of (gtin, mpn, brand) must have a value in the source feed.
+    # This check uses the ORIGINAL feed data, not enriched, because identifier_exists reflects
+    # whether the merchant HAS identifiers, not whether we extracted them.
+    ie = str(row.get('identifier_exists', '')).lower().strip()
+    if ie == 'false':
+        # Double-check: if brand is filled in source, identifier_exists should be true
+        orig_brand = df.iloc[idx].get(col_map.get('brand', ''), '') if 'brand' in col_map else ''
+        orig_gtin = df.iloc[idx].get(col_map.get('gtin', ''), '') if 'gtin' in col_map else ''
+        if has_val(orig_brand) or has_val(orig_gtin):
+            supplemental.at[idx, 'identifier_exists'] = 'true'
+
+# Summary
+fixes_applied = len(supplemental) - len(validation_flags)  # auto-fixed don't show as flags
+print(f"\nPost-enrichment validation: {len(validation_flags)} flags raised")
+for flag_type, count in Counter(f[1] for f in validation_flags).items():
+    print(f"  {flag_type}: {count}")
+```
+
+### Validation rules reference
+
+| # | Check | Action on fail | Why |
+|---|---|---|---|
+| 1 | size contains units (ml, g, capsule, etc.) → size_system/size_type should be empty | Auto-clear | size_system=EU on "500ml" makes no sense |
+| 2 | age_group is baby/toddler → gender should be empty | Auto-clear | Google doesn't require gender for babies |
+| 3 | gender contradicts title/product_type | Auto-clear + flag | Wrong gender = worse than no gender |
+| 4 | GPC is non-numeric | Auto-clear + flag | Google requires numeric ID |
+| 5 | Child age_group + adult-only GPC | Auto-clear + flag | Prevents Merchant Center disapproval |
+| 6 | is_bundle=true AND multipack set | Keep multipack, clear bundle + flag | Mutually exclusive per Google spec |
+| 7 | identifier_exists=false but brand/gtin present | Auto-fix to true | Prevents missed Shopping eligibility |
+
+**Key principle: clearing a wrong value is always better than keeping it.** An empty cell in a supplemental feed means Google falls back to the primary feed or its own inference. A wrong value actively misleads Google and can cause disapprovals.
+
 ## Step 8: Quality report
 
 Present AFTER running all skills:
@@ -340,6 +439,12 @@ Present AFTER running all skills:
   ⚠️ 30 titles optimized (score < 60 → review recommended)
   ⚠️ item_group_id via title normalization (medium confidence)
 
+  ── VALIDATION (post-enrichment checks) ───────────
+  ✅ 450 products: size_system/size_type cleared (metric size, not garment sizing)
+  ✅ 12 products: gender cleared (baby/toddler age_group)
+  ⚠️ 3 products: GPC cleared (child product in adult-only category)
+  ⚠️ 1 product: bundle/multipack conflict resolved
+
   ── OUTPUT ──────────────────────────────────────────
   File: supplemental_feed_complete.xlsx
   Columns: id + 35 attributes
@@ -359,6 +464,7 @@ Present AFTER running all skills:
 8. **Metric-first.** For size and unit_pricing, always prefer metric (g, ml, kg) over imperial (oz, lb).
 9. **Conservative on generation.** Titles only optimized if score < 60. Descriptions only generated/expanded if < 150 chars or empty.
 10. **Show before/after.** Always present spot-check examples so the user can verify quality.
+11. **Validate after enrichment.** Always run post-enrichment cross-checks (Step 7.5) before outputting. Clearing a wrong value is always better than keeping it.
 
 ## Guardrails inherited from skills
 
@@ -369,3 +475,4 @@ The orchestrator inherits all guardrails from the 25 individual skills:
 - **No false positives on multipack.** Dosage counts (60 capsules, 100 tablets) are NOT multipacks. The `Nx` pattern excludes dosage phrases (3x daily, 3x daags).
 - **Generated content matches feed language.** A Dutch feed never gets English generated text. An English feed never gets Dutch generated text.
 - **Technical values always English.** `condition`, `gender`, `age_group`, `adult`, `is_bundle`, `identifier_exists`, `size_system`, `size_type` — always English enum values regardless of feed language.
+- **Post-enrichment validation catches cross-attribute errors.** No individual skill can detect that a kids product got an adult-only GPC, or that a supplement got size_system=EU. The orchestrator's validation step (Step 7.5) runs 7 cross-checks after all skills complete and auto-fixes or clears contradictory values.
