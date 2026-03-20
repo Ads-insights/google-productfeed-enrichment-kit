@@ -46,66 +46,103 @@ df.columns = [c.strip().lower() for c in df.columns]
 
 ### Step 2: Extraction logic
 
-Uses the 4-layer cascade scanning for bundle signals.
+Uses a **conservative** approach — only flags products as bundles when there is strong, unambiguous evidence in the **title**. The description is deliberately NOT scanned for bundle signals because common words like "set" appear in too many non-bundle contexts (e.g., German "gesetzt", "festsetzt", "gesetzliche Garantie", or furniture descriptions mentioning "set" as part of room staging).
+
+**Key principle: `is_bundle=false` is always safe. `is_bundle=true` when wrong causes price mismatch warnings and potential disapprovals. When in doubt, leave as false.**
 
 ```python
 import re
 
-BUNDLE_KEYWORDS = {
-    # Dutch
-    'bundel', 'pakket', 'startpakket', 'starterset', 'compleet pakket',
-    'complete set', 'actie-pakket', 'voordeelpakket', 'combideal',
-    'combi-deal', 'combinatie', 'kit',
-    # English
-    'bundle', 'starter kit', 'starter pack', 'combo', 'combo deal',
-    'complete kit', 'complete set', 'accessory kit', 'value pack',
-}
+# ═══════════════════════════════════════════════════════════════
+# BUNDLE DETECTION: TITLE-ONLY, MULTI-WORD PATTERNS PREFERRED
+# ═══════════════════════════════════════════════════════════════
+#
+# ⚠️ DELIBERATELY CONSERVATIVE: only flag as bundle when evidence is strong.
+# A false negative (missing a bundle) is harmless — the product just shows normally.
+# A false positive (flagging a non-bundle) causes price mismatch warnings in
+# Google Merchant Center, because Google expects bundle prices to be higher
+# than individual product prices.
+#
+# Words like "set", "kit", and "combinatie" are EXCLUDED as single-word triggers
+# because they are too ambiguous:
+#   - "Messer-Set" = could be a bundle OR a single product (knife set)
+#   - "Bettwäsche-Set" = usually a single product with matching pieces
+#   - "Kit" = could be a repair kit (single product)
+#   - "Combinatie" = could describe a style combination, not a bundle
+#
+# Description scanning is DISABLED because:
+#   - German "gesetzt", "festsetzt", "gesetzliche" contain "set" as substring
+#   - Furniture descriptions mention staging with other products
+#   - Product care instructions mention "sets" of tools
+#   - Far too many false positives vs. the few real bundles found this way
 
 BUNDLE_MULTI_WORD = {
-    'starter kit', 'starter pack', 'startpakket', 'complete set',
-    'compleet pakket', 'combo deal', 'combi deal', 'combi-deal',
-    'accessory kit', 'value pack', 'voordeelpakket', 'actie-pakket',
+    # Dutch
+    'startpakket', 'starterset', 'compleet pakket', 'complete set',
+    'actie-pakket', 'voordeelpakket', 'combideal', 'combi-deal',
+    # English
+    'starter kit', 'starter pack', 'combo deal', 'complete kit',
+    'accessory kit', 'value pack',
+    # German
+    'komplettpaket', 'komplett-set', 'kombi-paket', 'starterset',
+    'vorteilspaket', 'aktionspaket',
 }
 
+# Single-word triggers — ONLY very unambiguous words
+# "set", "kit", "combinatie" are deliberately EXCLUDED (too many false positives)
+BUNDLE_SINGLE_WORDS = {
+    'bundel', 'bundle',
+    'pakket', 'paket',       # Dutch/German for "package/bundle"
+    'combideal',
+    'voordeelpakket',
+    'vorteilspaket',
+}
+
+# Numbered bundle patterns in title: "3er-Set", "5-teiliges Set", "Set von 4"
+BUNDLE_NUMBERED_PATTERNS = [
+    re.compile(r'\b\d+\s*[-]?\s*er[-\s]+set\b', re.I),           # "3er-Set", "5er Set"
+    re.compile(r'\bset\s+(?:van|von|of)\s+\d+\b', re.I),         # "Set von 3", "Set van 4"
+    re.compile(r'\b\d+\s*[-]?\s*teilig\w*\s+set\b', re.I),       # "5-teiliges Set"
+]
+
 def _scan_for_bundle(text):
-    """Scan text for bundle signals. Returns True if found."""
+    """Scan text for bundle signals. Returns True if found.
+    ONLY call this on TITLE text — never on descriptions."""
     text_lower = str(text).lower() if pd.notna(text) else ''
     if not text_lower or text_lower == 'nan':
         return False
-    # Multi-word first
+
+    # Check numbered bundle patterns first (highest confidence)
+    for pattern in BUNDLE_NUMBERED_PATTERNS:
+        if pattern.search(text_lower):
+            return True
+
+    # Multi-word patterns (high confidence)
     for kw in BUNDLE_MULTI_WORD:
         if kw in text_lower:
             return True
-    # Single-word
+
+    # Single-word matches (only unambiguous words, whole-word match)
     words = set(re.findall(r'[a-zà-ÿ-]+', text_lower))
-    if words & BUNDLE_KEYWORDS:
+    if words & BUNDLE_SINGLE_WORDS:
         return True
+
     return False
 
 def extract_is_bundle(title, description='', product_type='', labels='',
                       google_category='', bullet_points=''):
-    """Extract is_bundle using 4-layer cascade. Returns (value, source, confidence)."""
+    """Extract is_bundle. Returns (value, source, confidence).
 
-    # --- LAYER 1: Title ---
+    ⚠️ CONSERVATIVE: only scans the TITLE for bundle signals.
+    Description is deliberately NOT scanned due to extreme false positive rates.
+    Product type and labels are also skipped — bundle info belongs in the title."""
+
+    # --- ONLY scan the title ---
     if _scan_for_bundle(title):
         return 'true', 'title', 'high'
 
-    # --- LAYER 2: Description ---
-    if _scan_for_bundle(description):
-        return 'true', 'description', 'medium'
-
-    # --- LAYER 3: Other columns ---
-    for source_name, source_text in [
-        ('product_type', product_type),
-        ('labels', labels),
-        ('google_category', google_category),
-        ('bullet_points', bullet_points),
-    ]:
-        if _scan_for_bundle(source_text):
-            return 'true', source_name, 'medium'
-
-    # --- LAYER 4: Default false ---
-    return 'false', 'default (no bundle signals)', 'high'
+    # --- Default false ---
+    return 'false', 'default (no bundle signals in title)', 'high'
 ```
 
 ### Step 3: Apply and build supplemental feed
@@ -150,8 +187,10 @@ supplemental.to_excel(output_path, index=False)
 ## Important guardrails
 
 - Default is `false` — most products are not bundles
+- **A false `is_bundle=true` is far worse than a false `is_bundle=false`.** Wrong bundle flags cause price mismatch warnings in Google Merchant Center. When in doubt, leave as false.
 - Don't confuse bundles with multipacks: "3-pack sokken" = multipack, "camera + tas + statief" = bundle
-- "Set" is ambiguous — a "messenset" could be a bundle or a single product. Flag for review.
+- **"Set" is deliberately excluded as a single-word trigger** — it's too ambiguous across languages. A "Messer-Set" (knife set) is typically a single product, not a merchant-defined bundle. Only match "set" when combined with a number ("3er-Set", "Set von 4") or as part of a known bundle phrase ("complete set", "starterset").
+- **Description scanning is disabled** — words like "set" appear in too many non-bundle contexts in descriptions (German "gesetzt"/"gesetzliche", furniture staging descriptions, care instructions). Only the title is scanned.
 - Never overwrite existing values
 
 ## Output format
