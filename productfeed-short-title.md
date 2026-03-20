@@ -72,10 +72,16 @@ import re
 
 # Words/patterns to strip from title to create short version
 VARIANT_PATTERNS = [
-    # Colors (common NL + EN)
+    # Colors (NL, EN, DE, FR, IT, ES, PT — common colors only)
     r'\b(?:zwart|wit|rood|blauw|groen|geel|oranje|paars|roze|bruin|grijs|beige|goud|zilver|'
     r'black|white|red|blue|green|yellow|orange|purple|pink|brown|grey|gray|gold|silver|'
-    r'turquoise|bordeaux|navy|mint|khaki|taupe|antraciet|cognac|ecru|indigo)\b',
+    r'schwarz|weiß|weiss|rot|blau|grün|gelb|rosa|braun|grau|silber|'
+    r'noir|blanc|rouge|bleu|vert|jaune|violet|rose|marron|gris|doré|argenté|'
+    r'nero|bianco|rosso|blu|verde|giallo|grigio|oro|argento|'
+    r'negro|blanco|rojo|azul|amarillo|naranja|morado|marrón|dorado|plata|'
+    r'preto|branco|vermelho|castanho|cinzento|dourado|prateado|'
+    r'turquoise|bordeaux|navy|mint|khaki|taupe|antraciet|cognac|ecru|indigo|'
+    r'türkis|anthrazit|bordeaux|turchese|antracita)\b',
     # Size indicators
     r'\b(?:maat|size|mt\.?)\s*\w+',
     r'\b(?:xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl|4xl|5xl)\b',
@@ -83,8 +89,10 @@ VARIANT_PATTERNS = [
     r'\s*\|[^|]*$',
     # Content in parentheses at end (often variant info or shop name)
     r'\s*\([^)]*\)\s*$',
-    # "- Buy Now" / "| Shop" type suffixes
-    r'\s*[-–—]\s*(?:Shop|Webshop|Online|Kopen|Bestellen|Buy now|Order|Free shipping|Official).*$',
+    # "- Buy Now" / "| Shop" type suffixes (all languages)
+    r'\s*[-–—]\s*(?:Shop|Webshop|Online|Kopen|Bestellen|Buy now|Order|Free shipping|Official|'
+    r'Kaufen|Jetzt kaufen|Kostenloser Versand|Acheter|Commander|Livraison gratuite|'
+    r'Acquista|Compra|Spedizione gratuita|Comprar|Envío gratis|Frete grátis).*$',
     # Slash-separated colors: "Zwart/Wit"
     r'\b\w+/\w+\b',
 ]
@@ -104,13 +112,23 @@ def generate_short_title(title, brand='', product_type=''):
 
     short = title_str
 
-    # Step 1: Remove common suffixes (shop name, CTA's — NL and EN)
-    # NL patterns
-    short = re.sub(r'\s*\|\s*(?:Shop|Webshop|Winkel|Store).*$', '', short, flags=re.I)
+    # Step 1: Remove common suffixes (shop name, CTA's — all languages)
+    # Pipe separator (universal)
+    short = re.sub(r'\s*\|\s*(?:Shop|Webshop|Winkel|Store|Official|Online|Boutique|Negozio|Tienda|Loja).*$', '', short, flags=re.I)
+    # NL
     short = re.sub(r'\s*[-–—]\s*(?:Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', short, flags=re.I)
-    # EN patterns
+    # EN
     short = re.sub(r'\s*[-–—]\s*(?:Buy now|Shop now|Order now|Buy online|Free shipping|Official store).*$', '', short, flags=re.I)
-    short = re.sub(r'\s*\|\s*(?:Official|Store|Shop|Online).*$', '', short, flags=re.I)
+    # DE
+    short = re.sub(r'\s*[-–—]\s*(?:Jetzt kaufen|Jetzt bestellen|Online kaufen|Kostenloser Versand|Offizieller Shop).*$', '', short, flags=re.I)
+    # FR
+    short = re.sub(r'\s*[-–—]\s*(?:Acheter maintenant|Commander|Acheter en ligne|Livraison gratuite|Boutique officielle).*$', '', short, flags=re.I)
+    # IT
+    short = re.sub(r'\s*[-–—]\s*(?:Acquista ora|Compra ora|Acquista online|Spedizione gratuita|Negozio ufficiale).*$', '', short, flags=re.I)
+    # ES
+    short = re.sub(r'\s*[-–—]\s*(?:Compra ahora|Comprar online|Envío gratis|Tienda oficial).*$', '', short, flags=re.I)
+    # PT
+    short = re.sub(r'\s*[-–—]\s*(?:Compre agora|Comprar online|Frete grátis|Loja oficial).*$', '', short, flags=re.I)
 
     # Step 2: Remove trailing parentheses (often variant info)
     short = re.sub(r'\s*\([^)]*\)\s*$', '', short)
@@ -119,8 +137,8 @@ def generate_short_title(title, brand='', product_type=''):
     for pattern in VARIANT_PATTERNS[:1]:  # Only color patterns
         short = re.sub(pattern, '', short, flags=re.I)
 
-    # Step 4: Remove size indicators
-    short = re.sub(r'\b(?:maat|size|mt\.?)\s*\w+', '', short, flags=re.I)
+    # Step 4: Remove size indicators (all languages)
+    short = re.sub(r'\b(?:maat|size|mt\.?|größe|taille|taglia|talla|tamanho)\s*\w+', '', short, flags=re.I)
     short = re.sub(r'\b(?:xxs|xs|xl|xxl|xxxl|2xl|3xl|4xl|5xl)\b', '', short, flags=re.I)
     # Don't remove standalone S, M, L as they could be model names
 

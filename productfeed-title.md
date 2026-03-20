@@ -112,18 +112,44 @@ def detect_vertical(product_type, google_category, title):
 
     verticals = {
         'apparel': ['clothing', 'apparel', 'shoes', 'kleding', 'schoenen', 'shirt',
-                     'broek', 'jurk', 'jas', 'sneaker', 'accessoires'],
+                     'broek', 'jurk', 'jas', 'sneaker', 'accessoires',
+                     'bekleidung', 'schuhe', 'hemd', 'hose', 'kleid', 'jacke',
+                     'vêtements', 'chaussures', 'robe', 'veste',
+                     'abbigliamento', 'scarpe', 'camicia', 'vestito',
+                     'ropa', 'zapatos', 'camisa', 'vestido'],
         'electronics': ['electronics', 'phone', 'laptop', 'tablet', 'camera', 'audio',
-                        'telefoon', 'computer', 'speaker', 'koptelefoon', 'tv'],
+                        'telefoon', 'computer', 'speaker', 'koptelefoon', 'tv',
+                        'elektronik', 'telefon', 'lautsprecher', 'fernseher',
+                        'électronique', 'téléphone', 'ordinateur',
+                        'elettronica', 'telefono', 'altoparlante'],
         'home': ['home', 'garden', 'furniture', 'meubel', 'lamp', 'kussen', 'gordijn',
-                 'huis', 'tuin', 'bed', 'bank', 'stoel', 'tafel', 'kast'],
+                 'huis', 'tuin', 'bed', 'bank', 'stoel', 'tafel', 'kast',
+                 'möbel', 'garten', 'stuhl', 'tisch', 'schrank', 'lampe', 'vorhang',
+                 'maison', 'jardin', 'meuble', 'chaise', 'table', 'armoire',
+                 'casa', 'giardino', 'mobile', 'sedia', 'tavolo',
+                 'hogar', 'jardín', 'mueble', 'silla', 'mesa'],
         'health_beauty': ['health', 'beauty', 'cosmetic', 'skincare', 'parfum',
-                          'shampoo', 'crème', 'gezondheid', 'verzorging'],
-        'food': ['food', 'beverage', 'voeding', 'drank', 'koffie', 'thee', 'wijn'],
-        'sports': ['sport', 'fitness', 'bike', 'fiets', 'outdoor', 'e-bike'],
-        'baby': ['baby', 'toddler', 'peuter', 'kinder', 'kids'],
-        'books': ['book', 'boek', 'media', 'dvd', 'cd', 'vinyl'],
-        'specialty': ['candle', 'kaars', 'gift', 'cadeau', 'decoration', 'decoratie'],
+                          'shampoo', 'crème', 'gezondheid', 'verzorging',
+                          'gesundheit', 'kosmetik', 'pflege',
+                          'santé', 'beauté', 'cosmétique', 'soin',
+                          'salute', 'bellezza', 'cosmetico',
+                          'salud', 'belleza', 'cosmético'],
+        'food': ['food', 'beverage', 'voeding', 'drank', 'koffie', 'thee', 'wijn',
+                 'lebensmittel', 'getränk', 'kaffee', 'tee', 'wein',
+                 'alimentation', 'boisson', 'café', 'thé', 'vin',
+                 'alimento', 'bevanda', 'caffè', 'vino'],
+        'sports': ['sport', 'fitness', 'bike', 'fiets', 'outdoor', 'e-bike',
+                   'fahrrad', 'vélo', 'bicicletta', 'bicicleta'],
+        'baby': ['baby', 'toddler', 'peuter', 'kinder', 'kids',
+                 'kleinkind', 'säugling', 'bébé', 'enfant',
+                 'bambino', 'neonato', 'bebé', 'niño'],
+        'books': ['book', 'boek', 'media', 'dvd', 'cd', 'vinyl',
+                  'buch', 'bücher', 'livre', 'libro'],
+        'specialty': ['candle', 'kaars', 'gift', 'cadeau', 'decoration', 'decoratie',
+                      'kerze', 'geschenk', 'dekoration',
+                      'bougie', 'décoration',
+                      'candela', 'regalo', 'decorazione',
+                      'vela', 'decoración'],
     }
 
     for vertical, keywords in verticals.items():
@@ -186,10 +212,12 @@ def score_title(title, brand='', color='', size='', material='', vertical='gener
     if re.search(r'[!]{2,}|[?]{2,}', title_str):
         score -= 15
         issues.append('excessive_punctuation')
-    if re.search(r'gratis|free shipping|korting|sale|aanbieding|beste prijs|discount|best price|lowest price', title_str.lower()):
+    # Promotional text detection (NL, EN, DE, FR, IT, ES, PT)
+    if re.search(r'\b(?:gratis|free shipping|korting|sale|aanbieding|beste prijs|discount|best price|lowest price|rabatt|angebot|versandkostenfrei|soldes|réduction|livraison gratuite|saldi|sconto|spedizione gratuita|rebajas|descuento|envío gratis|saldos|frete grátis)\b', title_str.lower()):
         score -= 20
         issues.append('promotional_text')
-    if re.search(r'koop nu|bestel|buy now|order now|shop now|add to cart', title_str.lower()):
+    # CTA detection (NL, EN, DE, FR, IT, ES, PT)
+    if re.search(r'\b(?:koop nu|bestel|buy now|order now|shop now|add to cart|jetzt kaufen|jetzt bestellen|acheter maintenant|commander|acquista ora|compra ahora|comprar agora|compre agora)\b', title_str.lower()):
         score -= 20
         issues.append('cta_in_title')
 
@@ -197,7 +225,8 @@ def score_title(title, brand='', color='', size='', material='', vertical='gener
     if '|' in title_str:
         score -= 5
         issues.append('contains_separator')
-    if re.search(r'[-–—]\s*(?:kopen|webshop|online|shop|buy|order|store)\s*$', title_str.lower()):
+    # Shop suffix detection (NL, EN, DE, FR, IT, ES, PT)
+    if re.search(r'[-–—]\s*(?:kopen|webshop|online|shop|buy|order|store|kaufen|bestellen|acheter|boutique|acquista|negozio|comprar|tienda|loja)\s*$', title_str.lower()):
         score -= 10
         issues.append('shop_suffix')
 
@@ -249,15 +278,25 @@ def build_optimized_title(title, brand='', color='', size='', material='',
     # If title exists, optimize it
     optimized = title_str
 
-    # Step 1: Remove shop name suffixes (NL + EN)
+    # Step 1: Remove shop name suffixes (all languages)
     optimized = re.sub(r'\s*\|\s*[^|]+$', '', optimized)
     # NL suffixes
     optimized = re.sub(r'\s*[-–—]\s*(?:Kopen|Webshop|Online kopen|Bestellen|Nu bestellen).*$', '', optimized, flags=re.I)
     # EN suffixes
     optimized = re.sub(r'\s*[-–—]\s*(?:Buy now|Shop now|Order now|Buy online|Official store|Free delivery).*$', '', optimized, flags=re.I)
+    # DE suffixes
+    optimized = re.sub(r'\s*[-–—]\s*(?:Jetzt kaufen|Jetzt bestellen|Online kaufen|Kostenloser Versand|Offizieller Shop).*$', '', optimized, flags=re.I)
+    # FR suffixes
+    optimized = re.sub(r'\s*[-–—]\s*(?:Acheter maintenant|Commander|Acheter en ligne|Livraison gratuite|Boutique officielle).*$', '', optimized, flags=re.I)
+    # IT suffixes
+    optimized = re.sub(r'\s*[-–—]\s*(?:Acquista ora|Compra ora|Acquista online|Spedizione gratuita|Negozio ufficiale).*$', '', optimized, flags=re.I)
+    # ES suffixes
+    optimized = re.sub(r'\s*[-–—]\s*(?:Compra ahora|Comprar ahora|Comprar online|Envío gratis|Tienda oficial).*$', '', optimized, flags=re.I)
+    # PT suffixes
+    optimized = re.sub(r'\s*[-–—]\s*(?:Compre agora|Comprar agora|Comprar online|Frete grátis|Loja oficial).*$', '', optimized, flags=re.I)
 
-    # Step 2: Remove promotional text (NL + EN)
-    optimized = re.sub(r'\s*(?:gratis verzending|free shipping|sale|aanbieding|korting|discount|best price|lowest price|beste prijs)\s*', ' ', optimized, flags=re.I)
+    # Step 2: Remove promotional text (all languages, word-boundary safe)
+    optimized = re.sub(r'\b(?:gratis verzending|free shipping|aanbieding|korting|discount|best price|lowest price|beste prijs|versandkostenfrei|rabatt|angebot|livraison gratuite|soldes|réduction|spedizione gratuita|saldi|sconto|envío gratis|rebajas|descuento|frete grátis|saldos)\b', '', optimized, flags=re.I)
 
     # Step 3: Fix ALL CAPS
     if optimized.isupper():
