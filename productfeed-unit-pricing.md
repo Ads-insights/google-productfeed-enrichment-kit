@@ -90,15 +90,11 @@ UNIT_PATTERNS = [
     re.compile(r'(\d+(?:[.,]\d+)?)\s*oz\b', re.I),             # "16oz"
     re.compile(r'(\d+(?:[.,]\d+)?)\s*lb\b', re.I),             # "5lb"
 
-    # Length patterns
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*cm\b', re.I),             # "30cm"
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*mm\b', re.I),             # "200mm"
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*meter\b', re.I),          # "5 meter"
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*m\b(?!\w)', re.I),        # "5m" (not "5ml")
-
-    # Area patterns
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*m[²2]\b', re.I),          # "10m²", "10m2"
-    re.compile(r'(\d+(?:[.,]\d+)?)\s*sqm\b', re.I),            # "10sqm"
+    # ⚠️ Length units (cm, mm, m) and area units (m², sqm) are EXCLUDED from unit pricing.
+    # These are product DIMENSIONS, not consumable measures. Unit pricing is only for products
+    # sold by weight, volume, or count — e.g., food, beverages, cosmetics, cleaning products.
+    # A bedsheet that is "140 x 200 cm" does not have a unit price per meter.
+    # A bottle of shampoo that is "500 ml" DOES have a unit price per 100ml.
 
     # Count patterns
     re.compile(r'(\d+)\s*(?:stuks?|pieces?|tabs?|capsules?|tabletten?)', re.I),  # "30 stuks"
@@ -117,10 +113,10 @@ def normalize_unit(text_after_number):
     if t in ['mg']: return 'mg'
     if t in ['oz']: return 'oz'
     if t in ['lb']: return 'lb'
-    if t in ['cm']: return 'cm'
-    if t in ['mm']: return 'mm'
-    if t in ['m', 'meter']: return 'm'
-    if t in ['m²', 'm2', 'sqm']: return 'sqm'
+    # ⚠️ Length units (cm, mm, m) and area units (m², sqm) are NOT valid for unit pricing.
+    # They represent product dimensions, not consumable measures. Returning None here
+    # ensures these are never used as unit_pricing_measure values.
+    if t in ['cm', 'mm', 'm', 'meter', 'm²', 'm2', 'sqm']: return None
     if t in ['stuks', 'stuk', 'pieces', 'piece', 'tabs', 'tab',
              'capsules', 'capsule', 'tabletten', 'tablet']: return 'ct'
     return None
@@ -129,8 +125,7 @@ def normalize_unit(text_after_number):
 BASE_MEASURE_MAP = {
     'ml': '100ml', 'cl': '100ml', 'l': '1l', 'floz': '1floz',
     'g': '100g', 'mg': '100g', 'kg': '1kg', 'oz': '1oz', 'lb': '1lb',
-    'cm': '1m', 'mm': '1m', 'm': '1m',
-    'sqm': '1sqm',
+    # ⚠️ No length/area units — these are product dimensions, not unit pricing
     'ct': '1ct',
 }
 
@@ -138,15 +133,14 @@ FULL_MEASURE_PATTERN = re.compile(
     r'(\d+(?:[.,]\d+)?)\s*'
     r'(milliliter|liter|kilogram|gram|'
     r'ml|cl|l|fl\.?\s*oz|'
-    r'kg|gr?|mg|oz|lb|'
-    r'cm|mm|meter|m[²2]|sqm|m'
+    r'kg|gr?|mg|oz|lb'
     r'|stuks?|pieces?|tabs?|capsules?|tabletten?)',
     re.I
 )
 
 METRIC_MEASURE_PATTERN = re.compile(
     r'(\d+(?:[.,]\d+)?)\s*'
-    r'(milliliter|liter|kilogram|gram|ml|cl|l|kg|gr?|mg|cm|mm|meter|m[²2]|sqm|m'
+    r'(milliliter|liter|kilogram|gram|ml|cl|l|kg|gr?|mg'
     r'|stuks?|pieces?|tabs?|capsules?|tabletten?)',
     re.I
 )
@@ -273,6 +267,7 @@ Present summary with fill rate, sample values, and highlight any products where 
 
 ## Important guardrails
 
+- **NEVER use length or area units (cm, mm, m, m², sqm) as unit_pricing_measure.** These are product dimensions, not consumable measures. A "140 x 200 cm" bedsheet does not have a price per meter. Only weight (g, mg, kg, oz, lb), volume (ml, cl, l, floz), and count (ct/stuks/pieces) are valid unit pricing measures. This is the single most common source of false positives in unit pricing extraction.
 - **ALWAYS prioritize metric units** (g, ml, kg, l) over imperial (oz, lb, fl oz). If both are present in the title (e.g., "2.5 oz (70 g)"), use the metric value. This is critical for EU/NL compliance.
 - Never overwrite existing values
 - "m" standalone is ambiguous — could be meters or minutes. Only match when context suggests measurement
