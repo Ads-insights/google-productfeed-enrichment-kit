@@ -472,7 +472,9 @@ The orchestrator inherits all guardrails from the 25 individual skills:
 
 - **Never overwrite good data.** 23 of 25 skills skip products with existing values. Only `title` (score < 60) and `description` (< 150 chars) may modify existing values.
 - **Metric over imperial.** Size and unit_pricing always prefer metric when both are present.
-- **No false positives on multipack.** Dosage counts (60 capsules, 100 tablets) are NOT multipacks. The `Nx` pattern excludes dosage phrases (3x daily, 3x daags).
+- **No false positives on multipack.** Dosage counts (60 capsules, 100 tablets) are NOT multipacks. Furniture terms (3-Sitzer, 4-teilig, 5-Zonen) are NOT multipacks. The `-teilig`/`-delig` pattern is excluded — it means "consisting of X parts" (modular), not "X identical items". Only scan titles, not descriptions.
+- **No false positives on is_bundle.** The word "set" is excluded as a single-word trigger (too ambiguous: "Messer-Set", "gesetzliche Garantie", "festgesetzt"). Description scanning is disabled for bundles. Only unambiguous multi-word patterns or numbered patterns ("3er-Set") trigger a bundle flag.
+- **No false positives on unit_pricing.** Length units (cm, mm, m) and area units (m², sqm) are EXCLUDED from unit pricing. These are product dimensions, not consumable measures. Only weight (g/kg/mg), volume (ml/cl/l), and count (stuks/pieces) are valid unit pricing units.
 - **Generated content matches feed language.** A Dutch feed never gets English generated text. An English feed never gets Dutch generated text.
 - **Technical values always English.** `condition`, `gender`, `age_group`, `adult`, `is_bundle`, `identifier_exists`, `size_system`, `size_type` — always English enum values regardless of feed language.
 - **Post-enrichment validation catches cross-attribute errors.** No individual skill can detect that a kids product got an adult-only GPC, or that a supplement got size_system=EU. The orchestrator's validation step (Step 7.5) runs 7 cross-checks after all skills complete and auto-fixes or clears contradictory values.
