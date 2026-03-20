@@ -288,13 +288,18 @@ def generate_highlights(context, lang='nl'):
     if len(highlights) < 2:
         return '', 'insufficient data', 'unresolved'
 
-    # Validate each highlight: max 150 chars, no promotional text
+    # Validate each highlight: max 150 chars, no promotional text, no internal commas
     promo_pattern = (r'(?:gratis|korting|actie|aanbieding|beste prijs)'
                      if lang == 'nl' else
                      r'(?:free shipping|discount|sale|deal|best price|lowest price)')
     validated = []
     for h in highlights:
         h = h.strip()
+        # Strip commas — Google uses commas as the delimiter between highlights
+        # in text/TSV feeds. A comma inside a highlight causes Google to split
+        # it into separate (broken) entries.
+        h = h.replace(',', ' -')
+        h = re.sub(r'\s+', ' ', h).strip()
         if len(h) > 150:
             h = h[:147] + '...'
         if not re.search(promo_pattern, h.lower()):
