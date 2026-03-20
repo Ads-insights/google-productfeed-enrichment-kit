@@ -2,7 +2,7 @@
 
 ### 25 AI Skills + Orchestrator for Claude
 
-Upload any product feed. Get a fully enriched supplemental feed back in minutes.
+Upload any product feed. Get a fully enriched feed with 35+ key attributes back in minutes.
 
 > Built by **[Ads & Insights](https://adsinsights.nl)** — Freelance Google Ads & eCommerce Specialist
 
