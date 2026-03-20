@@ -62,27 +62,88 @@ total = len(df)
 
 This does NOT help Claude read the feed — Claude understands any language natively. The purpose is to determine what language the **generated content** should be written in.
 
-The rule: **generated content must match the feed's source language.** A Dutch feed gets Dutch descriptions. An English feed gets English descriptions. You never want a Dutch webshop to suddenly get English titles in their supplemental feed.
+The rule: **generated content must match the feed's source language.** A Dutch feed gets Dutch descriptions. A German feed gets German descriptions. You never want a French webshop to suddenly get English titles in their supplemental feed.
+
+Supported output languages: `nl`, `en`, `de`, `fr`, `it`, `es`, `pt`.
 
 ```python
-def detect_output_language(df, title_col):
+LANGUAGE_SIGNALS = {
+    'nl': r'\b(?:de|het|een|van|voor|met|uit|bij|ook|niet|maar|deze|naar)\b',
+    'en': r'\b(?:the|a|an|for|with|and|from|this|that|not|but|also|into)\b',
+    'de': r'\b(?:der|die|das|ein|eine|und|für|mit|von|aus|auf|ist|den|dem|nicht|auch|oder)\b',
+    'fr': r'\b(?:le|la|les|un|une|des|et|pour|avec|dans|sur|qui|est|pas|mais|sont|cette)\b',
+    'it': r'\b(?:il|la|le|un|una|gli|dei|per|con|che|non|sono|nel|dal|alla|questo|questa)\b',
+    'es': r'\b(?:el|la|los|las|un|una|y|para|con|del|por|que|no|se|este|esta|más)\b',
+    'pt': r'\b(?:o|a|os|as|um|uma|e|para|com|que|não|se|do|da|no|na|por|mais)\b',
+}
+
+def detect_output_language(df, title_col, col_map=None):
     """Determine the language for generated content by sampling titles.
-    Claude understands any input language — this only controls OUTPUT language."""
+    Claude understands any input language — this only controls OUTPUT language.
+    
+    Detection cascade:
+    1. Check 'feed label' or 'language' column in the feed (explicit merchant signal)
+    2. Count language-specific function words in titles (statistical signal)
+    3. Fallback to 'en' if truly ambiguous
+    """
+    
+    # --- Signal 1: Explicit feed label or language column ---
+    # Many feeds (especially Google Merchant Center exports) have a 'feed label' or 'language' column
+    # that directly states the target language/country.
+    if col_map:
+        for col_name in ['feed label', 'language', 'content language', 'target country']:
+            actual_col = col_map.get(col_name) or next(
+                (c for c in df.columns if c.lower().strip() == col_name), None)
+            if actual_col and actual_col in df.columns:
+                val = df[actual_col].dropna().head(1).tolist()
+                if val:
+                    label = str(val[0]).strip().lower()
+                    # Map country codes to language codes
+                    country_to_lang = {
+                        'nl': 'nl', 'be': 'nl', 'de': 'de', 'at': 'de', 'ch': 'de',
+                        'fr': 'fr', 'it': 'it', 'es': 'es', 'pt': 'pt',
+                        'gb': 'en', 'uk': 'en', 'us': 'en', 'au': 'en', 'ie': 'en',
+                        'en': 'en', 'english': 'en', 'dutch': 'nl', 'german': 'de',
+                        'deutsch': 'de', 'french': 'fr', 'français': 'fr',
+                        'italian': 'it', 'italiano': 'it', 'spanish': 'es',
+                        'español': 'es', 'portuguese': 'pt', 'português': 'pt',
+                        'nederlands': 'nl',
+                    }
+                    if label in country_to_lang:
+                        return country_to_lang[label]
+    
+    # --- Signal 2: Statistical language detection from titles ---
     sample = ' '.join(df[title_col].dropna().head(100).tolist()).lower()
+    
+    scores = {}
+    for lang, pattern in LANGUAGE_SIGNALS.items():
+        scores[lang] = len(re.findall(pattern, sample))
+    
+    # Filter out languages with 0 score
+    scores = {k: v for k, v in scores.items() if v > 0}
+    
+    if not scores:
+        return 'en'  # Fallback when no signals found at all
+    
+    # Winner must have at least 1.3x the score of the runner-up to be confident
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    winner_lang, winner_score = sorted_scores[0]
+    
+    if len(sorted_scores) > 1:
+        runner_up_score = sorted_scores[1][1]
+        if winner_score < runner_up_score * 1.3:
+            # Too close to call — check if feed label column can break the tie
+            # If not, default to the winner anyway (best guess)
+            pass
+    
+    return winner_lang
 
-    # Simple heuristic: count strong language indicators
-    nl_signals = len(re.findall(r'\b(?:de|het|een|van|voor|met|en|uit|bij)\b', sample))
-    en_signals = len(re.findall(r'\b(?:the|a|an|for|with|and|from|by)\b', sample))
-
-    if nl_signals > en_signals:
-        return 'nl'
-    elif en_signals > nl_signals:
-        return 'en'
-    else:
-        return 'en'  # Default to English when unclear
-
-output_lang = detect_output_language(df, title_col)
+output_lang = detect_output_language(df, title_col, col_map)
 ```
+
+### Important: `detect_output_language` is the shared language detection function
+
+All skills that need language detection should use this same logic. When a skill is run standalone (outside the orchestrator), it should implement the same detection cascade. The orchestrator passes `output_lang` to dependent skills; standalone skills detect it themselves.
 
 ## Where language matters (and where it doesn't)
 
@@ -103,19 +164,21 @@ These are codes/enums that Google Merchant Center expects in English regardless 
 | `size_type` | `regular`, `plus`, `tall`, `petite`, `maternity` |
 | `google_product_category` | numeric ID (e.g., `2831`) |
 
-### Category 2: Extracted attributes — output echoes whatever language the source data is in
-These are extracted verbatim from the feed. If the title says "zwart", color becomes "zwart". If it says "black", color becomes "black". Claude doesn't translate — it extracts.
+### Category 2: Extracted attributes — output must match the feed's language
+These are extracted from the feed and **output in the feed's detected language**. If the title says "schwarz", color becomes "Schwarz". If it says "black", color becomes "Black". If it says "noir", color becomes "Noir". The skill's vocabulary maps input words from any supported language to the correct output word for the detected `output_lang`.
 
-| Attribute | Example NL | Example EN |
-|---|---|---|
-| `color` | zwart | black |
-| `material` | katoen | cotton |
-| `pattern` | gestreept | striped |
-| `brand` | (same in any language) | (same in any language) |
-| `size` | 500 ml | 500 ml |
-| `product_type` | Kleding > Jassen | Clothing > Jackets |
-| `unit_pricing_measure` | 100g | 100g |
-| `item_group_id` | (derived from data) | (derived from data) |
+| Attribute | Example NL | Example EN | Example DE | Example FR |
+|---|---|---|---|---|
+| `color` | Zwart | Black | Schwarz | Noir |
+| `material` | Katoen | Cotton | Baumwolle | Coton |
+| `pattern` | Gestreept | Striped | Gestreift | Rayé |
+| `brand` | (same in any language) | (same) | (same) | (same) |
+| `size` | 500 ml | 500 ml | 500 ml | 500 ml |
+| `product_type` | Kleding > Jassen | Clothing > Jackets | Kleidung > Jacken | Vêtements > Vestes |
+| `unit_pricing_measure` | 100g | 100g | 100g | 100g |
+| `item_group_id` | (derived from data) | (derived) | (derived) | (derived) |
+
+**Pass `output_lang` to color and material skills.** The other extraction skills (pattern, brand, size, etc.) extract verbatim from the feed and don't need language routing.
 
 ### Category 3: Generated attributes — must match the detected output language
 These are the ONLY attributes where `output_lang` matters. Claude generates new text and must write it in the same language as the feed.
@@ -123,12 +186,12 @@ These are the ONLY attributes where `output_lang` matters. Claude generates new 
 | Attribute | What `output_lang` controls |
 |---|---|
 | `title` | Optimized/generated titles match source language |
-| `description` | Generated descriptions use NL or EN templates |
-| `short_title` | Strip patterns use NL or EN CTA words |
-| `product_highlight` | Bullet text: "Gemaakt van katoen" vs "Made from cotton" |
-| `product_detail` | Section labels: "Algemeen" vs "General" (note: Google accepts English labels regardless) |
+| `description` | Generated descriptions use language-appropriate templates |
+| `short_title` | Strip patterns use language-appropriate CTA words |
+| `product_highlight` | Bullet text: "Gemaakt van katoen" vs "Made from cotton" vs "Hergestellt aus Baumwolle" |
+| `product_detail` | Section labels: "Algemeen" vs "General" vs "Allgemein" (note: Google accepts English labels regardless) |
 
-**Pass `output_lang` to these 5 skills.** The other 20 skills ignore it.
+**Pass `output_lang` to these 5 generative skills AND to color and material extraction skills.** The other 18 skills ignore it.
 
 ## Step 3: Column mapping
 
@@ -223,8 +286,8 @@ Skills run in 4 phases. Each phase depends on results from the previous phase.
 ```
 Phase 1 — EXTRACTION (14 skills, independent)
   ┌─ brand          ← manufacturer/title first-word
-  ├─ color          ← title/description/labels
-  ├─ material       ← title/description/labels
+  ├─ color          ← title/description/labels              [output_lang]
+  ├─ material       ← title/description/labels              [output_lang]
   ├─ gender         ← title/product_type
   ├─ age_group      ← title/product_type
   ├─ pattern        ← title/description/labels
@@ -268,8 +331,11 @@ Phase 4 — GENERATIVE (5 skills, need all previous + output_lang)
 For each skill:
 
 ```python
-# Phase 1-3: no language parameter needed
-# Follow the skill's SKILL.md extraction logic exactly
+# Phase 1: color and material need output_lang for correct output language
+color_value = extract_color(title, description, product_type, labels, lang=output_lang)
+material_value = extract_material(title, description, product_type, labels, lang=output_lang)
+
+# Phase 1: other extraction skills — no language parameter needed
 size_value = extract_size(title, description, product_type, labels)
 
 # Phase 4: pass output_lang to generative skills
@@ -477,8 +543,8 @@ Present AFTER running all skills:
 ## Key rules
 
 1. **The orchestrator is a traffic controller, not a translator.** It routes data and controls output language — it does not help Claude understand input.
-2. **Language detection controls output only.** It determines which templates/patterns Phase 4 generative skills use. Phase 1-3 skills ignore it.
-3. **Column mapping is flexible.** Handles NL, EN, g:-prefixed, and vendor-specific column names.
+2. **Language detection supports 7 languages.** NL, EN, DE, FR, IT, ES, PT. It determines which output vocabulary/templates Phase 1 (color, material) and Phase 4 (generative) skills use. Other skills ignore it.
+3. **Column mapping is flexible.** Handles NL, EN, DE, FR, g:-prefixed, and vendor-specific column names.
 4. **Execution order is strict.** Phase 1 → 2 → 3 → 4. Dependencies flow downward.
 5. **Never reimplement skill logic.** Read each skill's SKILL.md and follow it. The orchestrator coordinates, the skills execute.
 6. **All products in output.** Empty cells where no enrichment was possible.
@@ -497,6 +563,7 @@ The orchestrator inherits all guardrails from the 25 individual skills:
 - **No false positives on multipack.** Dosage counts (60 capsules, 100 tablets) are NOT multipacks. Furniture terms (3-Sitzer, 4-teilig, 5-Zonen) are NOT multipacks. The `-teilig`/`-delig` pattern is excluded — it means "consisting of X parts" (modular), not "X identical items". Only scan titles, not descriptions.
 - **No false positives on is_bundle.** The word "set" is excluded as a single-word trigger (too ambiguous: "Messer-Set", "gesetzliche Garantie", "festgesetzt"). Description scanning is disabled for bundles. Only unambiguous multi-word patterns or numbered patterns ("3er-Set") trigger a bundle flag.
 - **No false positives on unit_pricing.** Length units (cm, mm, m) and area units (m², sqm) are EXCLUDED from unit pricing. These are product dimensions, not consumable measures. Only weight (g/kg/mg), volume (ml/cl/l), and count (stuks/pieces) are valid unit pricing units.
-- **Generated content matches feed language.** A Dutch feed never gets English generated text. An English feed never gets Dutch generated text.
+- **Generated content matches feed language.** A Dutch feed never gets English generated text. A German feed never gets French generated text. This applies to 7 supported languages: NL, EN, DE, FR, IT, ES, PT.
+- **Extracted color and material match feed language.** Color and material output use the detected `output_lang` to select the correct vocabulary. A German feed outputs "Schwarz", not "Black" or "Zwart".
 - **Technical values always English.** `condition`, `gender`, `age_group`, `adult`, `is_bundle`, `identifier_exists`, `size_system`, `size_type` — always English enum values regardless of feed language.
 - **Post-enrichment validation catches cross-attribute errors.** No individual skill can detect that a kids product got an adult-only GPC, or that a supplement got size_system=EU. The orchestrator's validation step (Step 7.5) runs 7 cross-checks after all skills complete and auto-fixes or clears contradictory values.
