@@ -42,26 +42,108 @@ df.columns = [c.strip().lower() for c in df.columns]
 
 ### Step 2: Extraction logic
 
+**size_system is ONLY relevant for clothing and shoe sizing.** Products with dimension-based sizes (furniture: "140 x 200 cm", textiles: "50 x 70 cm"), generic sizes ("Einheitsgröße"), or capacity-based sizes ("500 ml") should NOT get a size_system value. Assigning `size_system=EU` to a wardrobe or a bedsheet is meaningless and adds noise.
+
+The skill first checks whether the product's size is a recognizable garment or shoe size. If not, it leaves size_system empty regardless of other signals.
+
 ```python
 import re
 
-SIZE_SYSTEM_MAP = {
-    'eu': 'EU', 'eur': 'EU', 'europa': 'EU', 'european': 'EU', 'europees': 'EU',
-    'us': 'US', 'usa': 'US', 'american': 'US', 'amerikaans': 'US',
-    'uk': 'UK', 'british': 'UK', 'brits': 'UK',
-    'fr': 'FR', 'french': 'FR', 'frans': 'FR',
-    'it': 'IT', 'italian': 'IT', 'italiaans': 'IT',
-    'jp': 'JP', 'japan': 'JP', 'japanese': 'JP', 'japans': 'JP',
-    'au': 'AU', 'australian': 'AU', 'australisch': 'AU',
-    'cn': 'CN', 'chinese': 'CN', 'chinees': 'CN',
+# ═══════════════════════════════════════════════════════════════
+# SIZE SYSTEM: ONLY FOR GARMENT AND SHOE SIZING
+# ═══════════════════════════════════════════════════════════════
+#
+# ⚠️ size_system tells Google which sizing STANDARD is used (EU, US, UK, etc.)
+# This ONLY makes sense for:
+#   - Letter sizes: S, M, L, XL, XXL → size_system tells Google it's EU S vs US S
+#   - Numeric clothing sizes: 36, 38, 40, 42 → EU 38 ≠ US 38
+#   - Shoe sizes: 39, 40, 41, 42 → EU 42 ≠ US 42
+#
+# It does NOT make sense for:
+#   - Dimensions: "140 x 200 cm" (this is a measurement, not a sizing standard)
+#   - Volumes: "500 ml" (not a garment size)
+#   - Weights: "350 g/m²" (fabric weight, not a sizing standard)
+#   - Generic: "Einheitsgröße" / "One size" (no system needed)
+#   - Furniture: "2-Sitzer" (seat count, not a sizing standard)
+
+# Recognizable garment/shoe size patterns
+LETTER_SIZES = {'xxs', 'xs', 's', 'm', 'l', 'xl', 'xxl', 'xxxl', '2xl', '3xl', '4xl', '5xl'}
+NUMERIC_CLOTHING_SIZES = {str(n) for n in range(28, 62)}  # 28-61 (clothing)
+NUMERIC_SHOE_SIZES = {str(n) for n in range(16, 51)}      # 16-50 (shoes)
+NUMERIC_SHOE_HALVES = {f"{n}.5" for n in range(16, 51)}   # half sizes
+
+# GPC categories where size_system is relevant (apparel, shoes, accessories)
+APPAREL_GPC_PREFIXES = {
+    '166', '167', '168', '169', '170', '171', '172', '173', '174', '175',  # Apparel
+    '176', '177', '178', '179', '180', '181', '182', '183', '184', '185',
+    '186', '187', '188', '189', '190', '191', '192', '193', '194', '195',
+    '196', '197', '198', '199', '200', '201', '202', '203', '204', '205',
+    '206', '207', '208', '209', '210', '211', '212', '213', '214',
+    '1580', '1581', '1582', '1583', '1584', '1585',  # Shoes
+    '2302', '2303', '2304', '2305', '2306',  # Bathrobe/sleepwear
+    '5322', '5323', '5324', '5325', '5326', '5327', '5328', '5329',  # Shoe accessories
 }
 
-def extract_size_system(title, description='', feed_label=''):
+def _is_garment_or_shoe_size(size_value):
+    """Check if a size value looks like a garment or shoe size (not a dimension)."""
+    if not size_value:
+        return False
+    size_lower = str(size_value).lower().strip()
+    
+    # Exclude dimension-like sizes (contain cm, mm, m, x, ml, g, kg, etc.)
+    if re.search(r'\d+\s*(?:cm|mm|m\b|ml|cl|l\b|kg|g\b|mg)', size_lower):
+        return False
+    # Exclude "NxN" dimension patterns (e.g., "140 x 200")
+    if re.search(r'\d+\s*x\s*\d+', size_lower):
+        return False
+    # Exclude generic sizes
+    if size_lower in ('einheitsgröße', 'einheitsgroesse', 'one size', 'os', 'osfa', 'one size fits all', 'universal'):
+        return False
+    # Exclude furniture/capacity patterns
+    if re.search(r'\d+\s*[-]?\s*(?:sitzer|personen?|pers\.?|zonen?|latten)', size_lower):
+        return False
+    
+    # Check for letter sizes
+    size_words = set(re.findall(r'[a-z0-9.]+', size_lower))
+    if size_words & LETTER_SIZES:
+        return True
+    # Check for numeric clothing/shoe sizes (standalone number or with FR/EU suffix)
+    size_nums = re.findall(r'\b(\d+(?:\.\d)?)\b', size_lower)
+    for num in size_nums:
+        if num in NUMERIC_CLOTHING_SIZES or num in NUMERIC_SHOE_SIZES or num in NUMERIC_SHOE_HALVES:
+            return True
+    # Check for FR/EU size patterns like "50/52 FR"
+    if re.search(r'\d+\s*/\s*\d+\s*(?:fr|eu|us|uk)\b', size_lower, re.I):
+        return True
+    
+    return False
+
+SIZE_SYSTEM_MAP = {
+    'eu': 'EU', 'eur': 'EU', 'europa': 'EU', 'european': 'EU', 'europees': 'EU', 'europäisch': 'EU',
+    'us': 'US', 'usa': 'US', 'american': 'US', 'amerikaans': 'US', 'amerikanisch': 'US',
+    'uk': 'UK', 'british': 'UK', 'brits': 'UK', 'britisch': 'UK',
+    'fr': 'FR', 'french': 'FR', 'frans': 'FR', 'französisch': 'FR',
+    'it': 'IT', 'italian': 'IT', 'italiaans': 'IT', 'italienisch': 'IT',
+    'jp': 'JP', 'japan': 'JP', 'japanese': 'JP', 'japans': 'JP', 'japanisch': 'JP',
+    'au': 'AU', 'australian': 'AU', 'australisch': 'AU',
+    'cn': 'CN', 'chinese': 'CN', 'chinees': 'CN', 'chinesisch': 'CN',
+}
+
+def extract_size_system(title, description='', feed_label='', size_value='', google_product_category=''):
+    """Extract size_system. Returns (system, source, confidence).
+    
+    ⚠️ ONLY assigns size_system when the product has a recognizable garment/shoe size.
+    Products with dimension-based sizes (cm, mm), volumes, or generic sizes get NO size_system."""
+    
+    # GATE CHECK: Is this a garment/shoe size at all?
+    if not _is_garment_or_shoe_size(size_value):
+        return '', 'not a garment/shoe size', 'skipped'
+    
     title_lower = str(title).lower() if pd.notna(title) else ''
     desc_lower = str(description).lower() if pd.notna(description) else ''
     all_text = f"{title_lower} {desc_lower}"
 
-    # Pass 1: Explicit size system mention (e.g., "EU maat 42", "US size 10")
+    # Pass 1: Explicit size system mention (e.g., "EU maat 42", "US size 10", "FR 38")
     for keyword, system in SIZE_SYSTEM_MAP.items():
         pattern = rf'\b{re.escape(keyword)}\b'
         if re.search(pattern, all_text):
@@ -74,8 +156,8 @@ def extract_size_system(title, description='', feed_label=''):
     if feed_label_lower in ['nl', 'be', 'de', 'at', 'fr', 'it', 'es', 'pt']:
         return 'EU', 'feed label (European country)', 'high'
 
-    # Pass 3: Default to EU for Dutch webshops
-    return 'EU', 'default (Dutch webshop)', 'medium'
+    # Pass 3: Default to EU for European webshops
+    return 'EU', 'default (European webshop)', 'medium'
 ```
 
 ### Step 3: Apply and build supplemental feed
@@ -117,9 +199,10 @@ supplemental.to_excel(output_path, index=False)
 
 ## Important guardrails
 
+- **Only assign size_system to products with garment or shoe sizes.** Dimension-based sizes (cm, mm, "140 x 200"), volumes (ml, l), generic sizes ("Einheitsgröße", "One size"), and furniture sizes ("2-Sitzer", "6 Personen") should NEVER get a size_system. An empty size_system is always safe.
 - Never overwrite existing values
-- Default `EU` is safe for NL/BE webshops but flag this to the user
-- Only fill size_system for products that actually have a size value — leave blank if size is also empty
+- Default `EU` is safe for NL/BE/DE webshops but ONLY when the size is actually a garment/shoe size
+- Only fill size_system for products that actually have a recognizable garment/shoe size value — leave blank if size is a dimension, volume, or generic value
 
 ## Output format
 
