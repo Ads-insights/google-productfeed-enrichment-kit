@@ -118,19 +118,46 @@ When minimal data is available, use the title and product type to infer reasonab
 import re
 
 def detect_feed_language(df, title_col):
-    """Detect feed language by checking titles for Dutch vs English words."""
-    nl_words = {'de', 'het', 'een', 'van', 'voor', 'met', 'en', 'handgemaakt', 'handgemaakte', 'maat', 'kleur'}
-    en_words = {'the', 'a', 'an', 'for', 'with', 'and', 'handmade', 'size', 'color', 'colour'}
-    nl_score = 0
-    en_score = 0
-    sample = df[title_col].dropna().head(50)
-    for title in sample:
-        words = set(str(title).lower().split())
-        nl_score += len(words & nl_words)
-        en_score += len(words & en_words)
-    return 'en' if en_score > nl_score else 'nl'
+    """Detect feed language. Supports NL, EN, DE, FR, IT, ES, PT.
+    Same logic as orchestrator's detect_output_language()."""
+    import re
+    LANGUAGE_SIGNALS = {
+        'nl': r'\b(?:de|het|een|van|voor|met|uit|bij|ook|niet|maar|deze|naar)\b',
+        'en': r'\b(?:the|a|an|for|with|and|from|this|that|not|but|also|into)\b',
+        'de': r'\b(?:der|die|das|ein|eine|und|für|mit|von|aus|auf|ist|den|dem|nicht|auch|oder)\b',
+        'fr': r'\b(?:le|la|les|un|une|des|et|pour|avec|dans|sur|qui|est|pas|mais|sont|cette)\b',
+        'it': r'\b(?:il|la|le|un|una|gli|dei|per|con|che|non|sono|nel|dal|alla|questo|questa)\b',
+        'es': r'\b(?:el|la|los|las|un|una|y|para|con|del|por|que|no|se|este|esta|más)\b',
+        'pt': r'\b(?:o|a|os|as|um|uma|e|para|com|que|não|se|do|da|no|na|por|mais)\b',
+    }
+    for col_name in ['feed label', 'language', 'content language', 'target country']:
+        matches = [c for c in df.columns if c.lower().strip() == col_name]
+        if matches:
+            val = df[matches[0]].dropna().head(1).tolist()
+            if val:
+                label = str(val[0]).strip().lower()
+                country_to_lang = {
+                    'nl': 'nl', 'be': 'nl', 'de': 'de', 'at': 'de', 'ch': 'de',
+                    'fr': 'fr', 'it': 'it', 'es': 'es', 'pt': 'pt',
+                    'gb': 'en', 'uk': 'en', 'us': 'en', 'au': 'en', 'ie': 'en',
+                    'en': 'en', 'english': 'en', 'dutch': 'nl', 'german': 'de',
+                    'deutsch': 'de', 'french': 'fr', 'français': 'fr',
+                    'italian': 'it', 'italiano': 'it', 'spanish': 'es',
+                    'español': 'es', 'portuguese': 'pt', 'português': 'pt',
+                    'nederlands': 'nl',
+                }
+                if label in country_to_lang:
+                    return country_to_lang[label]
+    sample = ' '.join(df[title_col].dropna().head(100).tolist()).lower()
+    scores = {}
+    for lang, pattern in LANGUAGE_SIGNALS.items():
+        scores[lang] = len(re.findall(pattern, sample))
+    scores = {k: v for k, v in scores.items() if v > 0}
+    if not scores:
+        return 'en'
+    return max(scores, key=scores.get)
 
-# Bilingual templates
+# Templates per language (7 languages supported)
 TEMPLATES = {
     'nl': {
         'material': 'Gemaakt van {value}',
@@ -158,6 +185,7 @@ TEMPLATES = {
             r'(?:gratis|korting|aanbieding|actie)',
             r'(?:wij|ons|onze|onze winkel)',
         ],
+        'promo_pattern': r'(?:gratis|korting|actie|aanbieding|beste prijs)',
     },
     'en': {
         'material': 'Made from {value}',
@@ -189,6 +217,157 @@ TEMPLATES = {
             r'(?:free shipping|discount|sale|deal|offer)',
             r'(?:we |our |our shop|our store)',
         ],
+        'promo_pattern': r'(?:free shipping|discount|sale|deal|best price|lowest price)',
+    },
+    'de': {
+        'material': 'Hergestellt aus {value}',
+        'brand': 'Von {value}',
+        'size': 'Größe: {value}',
+        'weight': 'Gewicht: {value}',
+        'condition': 'Zustand: {value}',
+        'category': 'Kategorie: {value}',
+        'quality_words': {
+            'handgemacht': 'Handgemachtes Produkt',
+            'handgefertigt': 'Handgefertigt mit Sorgfalt',
+            'premium': 'Premium-Qualität',
+            'professionell': 'Professionelle Qualität',
+            'biologisch': 'Biologisch zertifiziert',
+            'nachhaltig': 'Nachhaltig produziert',
+            'wasserdicht': 'Wasserdichtes Design',
+            'kabellos': 'Kabellos verwendbar',
+            'wiederaufladbar': 'Wiederaufladbarer Akku',
+            'klappbar': 'Klappbar für einfache Aufbewahrung',
+            'verstellbar': 'Verstellbar für optimalen Komfort',
+            'ergonomisch': 'Ergonomisches Design',
+            'leicht': 'Leichte Konstruktion',
+            'tragbar': 'Tragbar und leicht zu transportieren',
+        },
+        'filler_patterns': [
+            r'^(?:klicken|bestellen|kaufen|ansehen|entdecken)',
+            r'(?:gratis|rabatt|angebot|aktion|versandkostenfrei)',
+            r'(?:wir |unser |unsere |unser shop)',
+        ],
+        'promo_pattern': r'(?:gratis|rabatt|angebot|aktion|bester preis|versandkostenfrei)',
+    },
+    'fr': {
+        'material': 'Fabriqué en {value}',
+        'brand': 'Par {value}',
+        'size': 'Taille: {value}',
+        'weight': 'Poids: {value}',
+        'condition': 'État: {value}',
+        'category': 'Catégorie: {value}',
+        'quality_words': {
+            'artisanal': 'Produit artisanal',
+            'fait main': 'Fait main avec soin',
+            'premium': 'Qualité premium',
+            'professionnel': 'Qualité professionnelle',
+            'biologique': 'Certifié biologique',
+            'durable': 'Production durable',
+            'imperméable': 'Design imperméable',
+            'sans fil': 'Connectivité sans fil',
+            'rechargeable': 'Batterie rechargeable',
+            'pliable': 'Pliable pour un rangement facile',
+            'réglable': 'Réglable pour un confort optimal',
+            'ergonomique': 'Design ergonomique',
+            'léger': 'Construction légère',
+            'portable': 'Portable et facile à transporter',
+        },
+        'filler_patterns': [
+            r'^(?:cliquez|commandez|achetez|voir|découvrez)',
+            r'(?:gratuit|réduction|soldes|promo|livraison gratuite)',
+            r'(?:nous |notre |nos |notre boutique)',
+        ],
+        'promo_pattern': r'(?:gratuit|réduction|soldes|promo|meilleur prix|livraison gratuite)',
+    },
+    'it': {
+        'material': 'Realizzato in {value}',
+        'brand': 'Di {value}',
+        'size': 'Taglia: {value}',
+        'weight': 'Peso: {value}',
+        'condition': 'Condizione: {value}',
+        'category': 'Categoria: {value}',
+        'quality_words': {
+            'artigianale': 'Prodotto artigianale',
+            'fatto a mano': 'Fatto a mano con cura',
+            'premium': 'Qualità premium',
+            'professionale': 'Qualità professionale',
+            'biologico': 'Certificato biologico',
+            'sostenibile': 'Produzione sostenibile',
+            'impermeabile': 'Design impermeabile',
+            'wireless': 'Connettività wireless',
+            'ricaricabile': 'Batteria ricaricabile',
+            'pieghevole': 'Pieghevole per facile stoccaggio',
+            'regolabile': 'Regolabile per il massimo comfort',
+            'ergonomico': 'Design ergonomico',
+            'leggero': 'Costruzione leggera',
+            'portatile': 'Portatile e facile da trasportare',
+        },
+        'filler_patterns': [
+            r'^(?:clicca|ordina|acquista|scopri)',
+            r'(?:gratis|sconto|saldi|offerta|spedizione gratuita)',
+            r'(?:noi |il nostro |la nostra |il nostro negozio)',
+        ],
+        'promo_pattern': r'(?:gratis|sconto|saldi|offerta|miglior prezzo|spedizione gratuita)',
+    },
+    'es': {
+        'material': 'Fabricado en {value}',
+        'brand': 'De {value}',
+        'size': 'Talla: {value}',
+        'weight': 'Peso: {value}',
+        'condition': 'Estado: {value}',
+        'category': 'Categoría: {value}',
+        'quality_words': {
+            'artesanal': 'Producto artesanal',
+            'hecho a mano': 'Hecho a mano con esmero',
+            'premium': 'Calidad premium',
+            'profesional': 'Calidad profesional',
+            'ecológico': 'Certificado ecológico',
+            'sostenible': 'Producción sostenible',
+            'impermeable': 'Diseño impermeable',
+            'inalámbrico': 'Conectividad inalámbrica',
+            'recargable': 'Batería recargable',
+            'plegable': 'Plegable para fácil almacenamiento',
+            'ajustable': 'Ajustable para máximo confort',
+            'ergonómico': 'Diseño ergonómico',
+            'ligero': 'Construcción ligera',
+            'portátil': 'Portátil y fácil de transportar',
+        },
+        'filler_patterns': [
+            r'^(?:haz clic|pedir|comprar|ver|descubrir)',
+            r'(?:gratis|descuento|rebajas|oferta|envío gratis)',
+            r'(?:nosotros |nuestro |nuestra |nuestra tienda)',
+        ],
+        'promo_pattern': r'(?:gratis|descuento|rebajas|oferta|mejor precio|envío gratis)',
+    },
+    'pt': {
+        'material': 'Fabricado em {value}',
+        'brand': 'De {value}',
+        'size': 'Tamanho: {value}',
+        'weight': 'Peso: {value}',
+        'condition': 'Condição: {value}',
+        'category': 'Categoria: {value}',
+        'quality_words': {
+            'artesanal': 'Produto artesanal',
+            'feito à mão': 'Feito à mão com cuidado',
+            'premium': 'Qualidade premium',
+            'profissional': 'Qualidade profissional',
+            'biológico': 'Certificado biológico',
+            'sustentável': 'Produção sustentável',
+            'impermeável': 'Design impermeável',
+            'sem fios': 'Conectividade sem fios',
+            'recarregável': 'Bateria recarregável',
+            'dobrável': 'Dobrável para fácil arrumação',
+            'ajustável': 'Ajustável para máximo conforto',
+            'ergonómico': 'Design ergonómico',
+            'leve': 'Construção leve',
+            'portátil': 'Portátil e fácil de transportar',
+        },
+        'filler_patterns': [
+            r'^(?:clique|encomende|compre|veja|descubra)',
+            r'(?:grátis|desconto|saldos|oferta|frete grátis)',
+            r'(?:nós |nosso |nossa |nossa loja)',
+        ],
+        'promo_pattern': r'(?:grátis|desconto|saldos|oferta|melhor preço|frete grátis)',
     },
 }
 
@@ -289,9 +468,7 @@ def generate_highlights(context, lang='nl'):
         return '', 'insufficient data', 'unresolved'
 
     # Validate each highlight: max 150 chars, no promotional text, no internal commas
-    promo_pattern = (r'(?:gratis|korting|actie|aanbieding|beste prijs)'
-                     if lang == 'nl' else
-                     r'(?:free shipping|discount|sale|deal|best price|lowest price)')
+    promo_pattern = t.get('promo_pattern', r'(?:free shipping|discount|sale|deal|best price)')
     validated = []
     for h in highlights:
         h = h.strip()

@@ -151,17 +151,46 @@ COL_MAP = {
 
 
 def detect_feed_language(df, title_col):
-    """Detect feed language by checking titles for Dutch vs English words."""
-    nl_words = {'de', 'het', 'een', 'van', 'voor', 'met', 'en', 'handgemaakt', 'maat', 'kleur'}
-    en_words = {'the', 'a', 'an', 'for', 'with', 'and', 'handmade', 'size', 'color', 'colour'}
-    nl_score = 0
-    en_score = 0
-    sample = df[title_col].dropna().head(50)
-    for title in sample:
-        words = set(str(title).lower().split())
-        nl_score += len(words & nl_words)
-        en_score += len(words & en_words)
-    return 'en' if en_score > nl_score else 'nl'
+    """Detect feed language. Supports NL, EN, DE, FR, IT, ES, PT.
+    Same logic as orchestrator's detect_output_language()."""
+    import re
+    LANGUAGE_SIGNALS = {
+        'nl': r'\b(?:de|het|een|van|voor|met|uit|bij|ook|niet|maar|deze|naar)\b',
+        'en': r'\b(?:the|a|an|for|with|and|from|this|that|not|but|also|into)\b',
+        'de': r'\b(?:der|die|das|ein|eine|und|für|mit|von|aus|auf|ist|den|dem|nicht|auch|oder)\b',
+        'fr': r'\b(?:le|la|les|un|une|des|et|pour|avec|dans|sur|qui|est|pas|mais|sont|cette)\b',
+        'it': r'\b(?:il|la|le|un|una|gli|dei|per|con|che|non|sono|nel|dal|alla|questo|questa)\b',
+        'es': r'\b(?:el|la|los|las|un|una|y|para|con|del|por|que|no|se|este|esta|más)\b',
+        'pt': r'\b(?:o|a|os|as|um|uma|e|para|com|que|não|se|do|da|no|na|por|mais)\b',
+    }
+    # Check feed label / language column first
+    for col_name in ['feed label', 'language', 'content language', 'target country']:
+        matches = [c for c in df.columns if c.lower().strip() == col_name]
+        if matches:
+            val = df[matches[0]].dropna().head(1).tolist()
+            if val:
+                label = str(val[0]).strip().lower()
+                country_to_lang = {
+                    'nl': 'nl', 'be': 'nl', 'de': 'de', 'at': 'de', 'ch': 'de',
+                    'fr': 'fr', 'it': 'it', 'es': 'es', 'pt': 'pt',
+                    'gb': 'en', 'uk': 'en', 'us': 'en', 'au': 'en', 'ie': 'en',
+                    'en': 'en', 'english': 'en', 'dutch': 'nl', 'german': 'de',
+                    'deutsch': 'de', 'french': 'fr', 'français': 'fr',
+                    'italian': 'it', 'italiano': 'it', 'spanish': 'es',
+                    'español': 'es', 'portuguese': 'pt', 'português': 'pt',
+                    'nederlands': 'nl',
+                }
+                if label in country_to_lang:
+                    return country_to_lang[label]
+    # Statistical detection from titles
+    sample = ' '.join(df[title_col].dropna().head(100).tolist()).lower()
+    scores = {}
+    for lang, pattern in LANGUAGE_SIGNALS.items():
+        scores[lang] = len(re.findall(pattern, sample))
+    scores = {k: v for k, v in scores.items() if v > 0}
+    if not scores:
+        return 'en'
+    return max(scores, key=scores.get)
 
 DESC_TEMPLATES = {
     'nl': {
@@ -197,6 +226,91 @@ DESC_TEMPLATES = {
         'expand_size': 'Size: {value}.',
         'expand_weight': 'Weight: {value}.',
         'shop_suffixes': r'(?:Buy|Shop|Order|Store|Buy now|Shop now)',
+    },
+    'de': {
+        'brand': 'Von {value}.',
+        'features_label': 'Eigenschaften',
+        'material': 'Material: {value}',
+        'color': 'Farbe: {value}',
+        'size': 'Größe: {value}',
+        'pattern': 'Muster: {value}',
+        'weight': 'Gewicht: {value}',
+        'condition': 'Zustand: {value}',
+        'category': 'Kategorie: {value}.',
+        'expand_brand': 'Marke: {value}.',
+        'expand_material': 'Material: {value}.',
+        'expand_color': 'Farbe: {value}.',
+        'expand_size': 'Größe: {value}.',
+        'expand_weight': 'Gewicht: {value}.',
+        'shop_suffixes': r'(?:Kaufen|Shop|Bestellen|Jetzt kaufen|Online bestellen)',
+    },
+    'fr': {
+        'brand': 'Par {value}.',
+        'features_label': 'Caractéristiques',
+        'material': 'matière: {value}',
+        'color': 'couleur: {value}',
+        'size': 'taille: {value}',
+        'pattern': 'motif: {value}',
+        'weight': 'poids: {value}',
+        'condition': 'état: {value}',
+        'category': 'Catégorie: {value}.',
+        'expand_brand': 'Marque: {value}.',
+        'expand_material': 'Matière: {value}.',
+        'expand_color': 'Couleur: {value}.',
+        'expand_size': 'Taille: {value}.',
+        'expand_weight': 'Poids: {value}.',
+        'shop_suffixes': r'(?:Acheter|Boutique|Commander|Achetez maintenant|Livraison gratuite)',
+    },
+    'it': {
+        'brand': 'Di {value}.',
+        'features_label': 'Caratteristiche',
+        'material': 'materiale: {value}',
+        'color': 'colore: {value}',
+        'size': 'taglia: {value}',
+        'pattern': 'fantasia: {value}',
+        'weight': 'peso: {value}',
+        'condition': 'condizione: {value}',
+        'category': 'Categoria: {value}.',
+        'expand_brand': 'Marca: {value}.',
+        'expand_material': 'Materiale: {value}.',
+        'expand_color': 'Colore: {value}.',
+        'expand_size': 'Taglia: {value}.',
+        'expand_weight': 'Peso: {value}.',
+        'shop_suffixes': r'(?:Acquista|Compra|Negozio|Acquista ora|Spedizione gratuita)',
+    },
+    'es': {
+        'brand': 'De {value}.',
+        'features_label': 'Características',
+        'material': 'material: {value}',
+        'color': 'color: {value}',
+        'size': 'talla: {value}',
+        'pattern': 'estampado: {value}',
+        'weight': 'peso: {value}',
+        'condition': 'estado: {value}',
+        'category': 'Categoría: {value}.',
+        'expand_brand': 'Marca: {value}.',
+        'expand_material': 'Material: {value}.',
+        'expand_color': 'Color: {value}.',
+        'expand_size': 'Talla: {value}.',
+        'expand_weight': 'Peso: {value}.',
+        'shop_suffixes': r'(?:Comprar|Tienda|Pedido|Compra ahora|Envío gratis)',
+    },
+    'pt': {
+        'brand': 'De {value}.',
+        'features_label': 'Características',
+        'material': 'material: {value}',
+        'color': 'cor: {value}',
+        'size': 'tamanho: {value}',
+        'pattern': 'padrão: {value}',
+        'weight': 'peso: {value}',
+        'condition': 'condição: {value}',
+        'category': 'Categoria: {value}.',
+        'expand_brand': 'Marca: {value}.',
+        'expand_material': 'Material: {value}.',
+        'expand_color': 'Cor: {value}.',
+        'expand_size': 'Tamanho: {value}.',
+        'expand_weight': 'Peso: {value}.',
+        'shop_suffixes': r'(?:Comprar|Loja|Encomendar|Compre agora|Frete grátis)',
     },
 }
 
