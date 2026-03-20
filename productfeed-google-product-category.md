@@ -14,7 +14,7 @@ The `[google_product_category]` attribute is optional but high-impact in Google 
 - Correct categorization improves ad relevance, search matching, and Shopping tab filtering
 - Some categories (Apparel, Media, Software) require specific additional attributes — wrong category = wrong requirements
 - Category directly affects bidding segmentation in Google Ads campaigns
-- Netherlands is one of 12 countries where category subdivision is available for campaign targeting
+- A wrong GPC is worse than no GPC — it causes Merchant Center disapprovals
 
 ## Google's specifications
 
@@ -30,255 +30,264 @@ The `[google_product_category]` attribute is optional but high-impact in Google 
 - One category per product (no multi-category)
 - If no category fits, don't assign one — use product_type instead
 
-**Language options:**
-- Numeric IDs work in all languages (recommended)
-- English (en-US) taxonomy paths are universally accepted
-- Dutch (nl-NL) taxonomy paths are accepted for NL feeds
-- IDs are identical across all language versions
+## Step 1: Load the Google taxonomy
 
-**Mandatory categories**: Apparel & Accessories, Media, and Software REQUIRE google_product_category to be set for proper attribute enforcement.
-
-## Taxonomy reference
-
-The full taxonomy is available at:
-- With IDs (EN): https://www.google.com/basepages/producttype/taxonomy-with-ids.en-US.txt
-- With IDs (NL): https://www.google.com/basepages/producttype/taxonomy-with-ids.nl-NL.txt
-- Without IDs (EN): https://www.google.com/basepages/producttype/taxonomy.en-US.txt
-
-The taxonomy contains ~6000 categories organized hierarchically up to 7 levels deep. Version 2021-09-21 is the current version.
-
-## Workflow
-
-### Step 1: Load the feed
+**Before classifying any products, fetch and parse the official Google taxonomy.** This is non-negotiable — without it, classification is guesswork.
 
 ```python
+import re
 import pandas as pd
 
+# Fetch the official taxonomy
+taxonomy_url = "https://www.google.com/basepages/producttype/taxonomy-with-ids.en-US.txt"
+
+# Use web_fetch tool to download the taxonomy file, then parse it:
+taxonomy = {}        # {id_str: full_path}  e.g. {'212': 'Apparel & Accessories > Clothing > Shirts & Tops'}
+taxonomy_reverse = {}  # {full_path_lower: id_str} for reverse lookup
+top_level_map = {}   # {id_str: top_level_category} e.g. {'212': 'Apparel & Accessories'}
+
+for line in taxonomy_text.strip().split('\n'):
+    if line.startswith('#') or not line.strip():
+        continue
+    parts = line.split(' - ', 1)
+    if len(parts) == 2:
+        cat_id = parts[0].strip()
+        cat_path = parts[1].strip()
+        taxonomy[cat_id] = cat_path
+        taxonomy_reverse[cat_path.lower()] = cat_id
+        top_level_map[cat_id] = cat_path.split(' > ')[0]
+
+print(f"Loaded {len(taxonomy)} Google taxonomy categories")
+```
+
+This gives you three powerful tools:
+1. **`taxonomy[id]`** — validate any GPC code exists and see its full path
+2. **`taxonomy_reverse[path]`** — look up the ID for a category path
+3. **`top_level_map[id]`** — get the top-level category for cross-checking
+
+## Step 2: Load and inspect the feed
+
+```python
 file_path = "/mnt/user-data/uploads/<filename>"
-if file_path.endswith('.zip'):
-    import zipfile
-    with zipfile.ZipFile(file_path) as z:
-        tsv_name = [f for f in z.namelist() if f.endswith('.tsv')][0]
-        df = pd.read_csv(z.open(tsv_name), sep='\t', dtype=str)
-elif file_path.endswith('.csv'):
-    df = pd.read_csv(file_path, dtype=str)
-elif file_path.endswith('.tsv'):
-    df = pd.read_csv(file_path, sep='\t', dtype=str)
-else:
-    df = pd.read_excel(file_path, dtype=str)
+# [standard file loading code — see orchestrator for format detection]
 
 df.columns = [c.strip().lower() for c in df.columns]
 ```
 
-### Step 2: Classification strategy
+## Step 3: Classification strategy
 
-This is a CLASSIFICATION skill — it maps products to a fixed taxonomy. The approach uses a 4-layer cascade:
+Uses a 4-layer cascade. **Every assigned GPC is validated against the taxonomy before output.**
 
-**Layer 1: Learn from existing categories in the feed**
-If some products already have a google_product_category, build a mapping from product_type/title keywords to categories. Apply this mapping to uncategorized products with similar characteristics.
+### Layer 1: Learn from existing categories in the feed
 
-**Layer 2: Map from product_type**
-The product_type field often contains a merchant's own category hierarchy (e.g., "Wonen > Verlichting > Tafellampen"). Map these to the nearest Google taxonomy category.
-
-**Layer 3: Keyword-based classification from title + description**
-Use keyword matching against a curated mapping of common product keywords to Google taxonomy categories.
-
-**Layer 4: Broad category fallback**
-When only limited info is available, assign the broadest reasonable category rather than nothing.
+If some products already have a google_product_category, build a mapping from product_type/title keywords to categories. This is the most powerful strategy — it uses the merchant's own categorization as ground truth.
 
 ```python
-import re
-from collections import Counter
-
-# === Common keyword → Google category mappings ===
-# These cover the most frequent Dutch webshop product types
-# Format: (keywords_to_match, google_category_id, google_category_path)
-
-KEYWORD_CATEGORY_MAP = [
-    # Electronics
-    (['smartphone', 'telefoon', 'mobile phone', 'iphone', 'samsung galaxy'],
-     267, 'Electronics > Communications > Telephony > Mobile Phones'),
-    (['laptop', 'notebook'], 
-     328, 'Electronics > Computers > Laptops'),
-    (['tablet', 'ipad'],
-     4745, 'Electronics > Computers > Tablet Computers'),
-    (['koptelefoon', 'headphone', 'earbuds', 'oordopjes', 'oortjes'],
-     505794, 'Electronics > Audio > Audio Accessories > Headphones & Headsets'),
-    (['speaker', 'luidspreker', 'bluetooth speaker'],
-     236, 'Electronics > Audio > Speakers'),
-    (['tv', 'televisie', 'television', 'monitor', 'beeldscherm'],
-     404, 'Electronics > Video > Televisions'),
-    (['camera', 'fotocamera', 'fototoestel'],
-     152, 'Cameras & Optics > Cameras > Digital Cameras'),
-    (['smartwatch', 'horloge', 'watch'],
-     201, 'Apparel & Accessories > Jewelry > Watches'),
-    (['stofzuiger', 'vacuum cleaner'],
-     623, 'Home & Garden > Household Appliances > Vacuums'),
-    (['wasmachine', 'washing machine'],
-     620, 'Home & Garden > Household Appliances > Laundry Appliances > Washing Machines'),
-
-    # Apparel & Accessories
-    (['sneaker', 'sneakers', 'schoen', 'schoenen', 'shoes'],
-     187, 'Apparel & Accessories > Shoes'),
-    (['jurk', 'dress', 'jurken'],
-     2271, 'Apparel & Accessories > Clothing > Dresses'),
-    (['t-shirt', 'tshirt', 'shirt'],
-     212, 'Apparel & Accessories > Clothing > Shirts & Tops'),
-    (['broek', 'pants', 'jeans', 'trousers'],
-     204, 'Apparel & Accessories > Clothing > Pants'),
-    (['jas', 'jacket', 'coat', 'jas'],
-     5598, 'Apparel & Accessories > Clothing > Outerwear > Coats & Jackets'),
-    (['zonnebril', 'sunglasses'],
-     178, 'Apparel & Accessories > Clothing Accessories > Sunglasses'),
-    (['tas', 'bag', 'handtas', 'rugzak', 'backpack'],
-     6551, 'Apparel & Accessories > Handbags, Wallets & Cases'),
-
-    # Home & Garden
-    (['meubel', 'furniture', 'kast', 'tafel', 'stoel', 'bank', 'sofa'],
-     436, 'Home & Garden > Furniture'),
-    (['lamp', 'verlichting', 'lighting', 'led lamp'],
-     594, 'Home & Garden > Lighting > Lamps'),
-    (['bed', 'matras', 'mattress'],
-     4299, 'Home & Garden > Furniture > Beds & Accessories > Beds & Bed Frames'),
-    (['kussen', 'pillow', 'cushion'],
-     567, 'Home & Garden > Linens & Bedding > Pillows'),
-    (['gordijn', 'curtain', 'raamdecoratie'],
-     1723, 'Home & Garden > Decor > Window Treatments > Curtains & Drapes'),
-
-    # Sports & Outdoors
-    (['fiets', 'bike', 'bicycle', 'e-bike', 'ebike', 'elektrische fiets'],
-     1025, 'Vehicles & Parts > Vehicle Parts & Accessories > Bicycle Parts & Accessories'),
-    (['fitness', 'sport', 'gym', 'dumbbell', 'halter'],
-     990, 'Sporting Goods > Exercise & Fitness'),
-
-    # Food & Beverages
-    (['koffie', 'coffee', 'thee', 'tea'],
-     2427, 'Food, Beverages & Tobacco > Beverages'),
-    (['wijn', 'wine', 'bier', 'beer'],
-     499676, 'Food, Beverages & Tobacco > Beverages > Alcoholic Beverages'),
-
-    # Health & Beauty
-    (['parfum', 'perfume', 'eau de toilette'],
-     2619, 'Health & Beauty > Personal Care > Cosmetics > Perfume & Cologne'),
-    (['shampoo', 'conditioner', 'haarproduct'],
-     2441, 'Health & Beauty > Personal Care > Hair Care'),
-    (['crème', 'cream', 'moisturizer', 'huidverzorging', 'skincare'],
-     2844, 'Health & Beauty > Personal Care > Cosmetics > Skin Care'),
-
-    # Baby & Toddler
-    (['kinderwagen', 'stroller', 'buggy'],
-     568, 'Baby & Toddler > Baby Transport > Strollers'),
-    (['luier', 'diaper'],
-     553, 'Baby & Toddler > Diapering'),
-
-    # Arts & Crafts / Memorial
-    (['candle', 'kaars', 'waxmelt', 'geurkaars', 'scented candle'],
-     3580, 'Arts & Entertainment > Hobbies & Creative Arts > Arts & Crafts'),
-
-    # Pet Supplies
-    (['hondenvoer', 'dog food', 'kattenvoer', 'cat food', 'huisdier', 'pet'],
-     2, 'Animals & Pet Supplies > Pet Supplies'),
-
-    # Vehicles
-    (['auto-onderdeel', 'car part', 'autoband', 'tire'],
-     5613, 'Vehicles & Parts > Vehicle Parts & Accessories'),
-    (['scooter', 'elektrische scooter'],
-     5190, 'Vehicles & Parts > Vehicles > Motor Vehicles > Motorcycles & Scooters'),
-]
-
-
-def build_category_map_from_feed(df, gpc_col, ptype_col, title_col):
-    """Learn category assignments from products that already have a GPC.
-    Returns a dict mapping product_type values to (category_id, category_path)."""
-    learned_map = {}
-    if not gpc_col:
-        return learned_map
+def build_learned_map(df, gpc_col, ptype_col, title_col):
+    """Learn category assignments from products that already have a GPC."""
+    learned = {}
+    if not gpc_col or gpc_col not in df.columns:
+        return learned
 
     has_gpc = df[gpc_col].notna() & (df[gpc_col].str.strip() != '') & (df[gpc_col].str.lower() != 'nan')
-    if has_gpc.sum() == 0:
-        return learned_map
 
-    # Group by product_type and find most common GPC
+    # Map product_type → most common GPC
     if ptype_col and ptype_col in df.columns:
         for ptype in df.loc[has_gpc, ptype_col].dropna().unique():
-            ptype_clean = str(ptype).strip()
-            if ptype_clean and ptype_clean.lower() not in ['', 'nan']:
-                mask = has_gpc & (df[ptype_col] == ptype)
+            ptype_clean = str(ptype).strip().lower()
+            if ptype_clean and ptype_clean not in ['', 'nan']:
+                mask = has_gpc & (df[ptype_col].str.lower().str.strip() == ptype_clean)
                 if mask.sum() > 0:
-                    most_common_gpc = df.loc[mask, gpc_col].mode().iloc[0]
-                    learned_map[ptype_clean.lower()] = most_common_gpc
+                    gpc_val = df.loc[mask, gpc_col].mode().iloc[0]
+                    # VALIDATE against taxonomy
+                    if str(gpc_val).strip() in taxonomy:
+                        learned[ptype_clean] = str(gpc_val).strip()
 
-    return learned_map
-
-
-def classify_product(title, description='', product_type='', labels='',
-                     google_category_existing='', learned_map=None):
-    """Classify a product into Google's taxonomy.
-    Returns (category_value, source, confidence).
-    category_value is the numeric ID (preferred) or full path."""
-
-    title_lower = str(title).lower() if pd.notna(title) else ''
-    desc_lower = str(description).lower() if pd.notna(description) else ''
-    ptype_lower = str(product_type).lower() if pd.notna(product_type) else ''
-    labels_lower = str(labels).lower() if pd.notna(labels) else ''
-
-    # --- LAYER 1: Match from learned category map ---
-    if learned_map and ptype_lower:
-        if ptype_lower in learned_map:
-            return learned_map[ptype_lower], 'learned from feed (product_type)', 'high'
-
-    # --- LAYER 2: Keyword matching in title + product_type ---
-    all_text = f"{title_lower} {ptype_lower} {labels_lower}"
-    for keywords, cat_id, cat_path in KEYWORD_CATEGORY_MAP:
-        for kw in keywords:
-            if kw in all_text:
-                return str(cat_id), f'keyword match: "{kw}"', 'medium'
-
-    # --- LAYER 3: Keyword matching in description ---
-    if desc_lower and desc_lower != 'nan':
-        all_text_desc = f"{desc_lower}"
-        for keywords, cat_id, cat_path in KEYWORD_CATEGORY_MAP:
-            for kw in keywords:
-                if kw in all_text_desc:
-                    return str(cat_id), f'description keyword: "{kw}"', 'medium'
-
-    # --- LAYER 4: No match found ---
-    return '', 'none', 'unresolved'
+    return learned
 ```
 
-### Step 3: Apply and build supplemental feed
+### Layer 2: Map from product_type using taxonomy path matching
+
+Match the merchant's product_type hierarchy against Google's taxonomy paths. Find the most specific matching category.
+
+```python
+def match_product_type_to_taxonomy(product_type):
+    """Find the best taxonomy match for a merchant's product_type.
+    Returns (gpc_id, confidence) or (None, None)."""
+    if not product_type or str(product_type).lower() in ['nan', '']:
+        return None, None
+
+    pt_lower = str(product_type).lower().strip()
+    pt_parts = [p.strip() for p in pt_lower.split('>')]
+
+    # Try matching the last (most specific) part of product_type against taxonomy paths
+    best_match_id = None
+    best_match_depth = 0
+
+    for cat_id, cat_path in taxonomy.items():
+        cat_lower = cat_path.lower()
+        cat_parts = [p.strip() for p in cat_lower.split('>')]
+
+        # Check how many levels match from the end (most specific first)
+        matches = 0
+        for pt_part in reversed(pt_parts):
+            for cat_part in reversed(cat_parts):
+                if pt_part in cat_part or cat_part in pt_part:
+                    matches += 1
+                    break
+
+        # Prefer deeper matches (more specific categories)
+        cat_depth = len(cat_parts)
+        if matches > best_match_depth or (matches == best_match_depth and cat_depth > best_match_depth):
+            if matches >= 1:
+                best_match_id = cat_id
+                best_match_depth = matches
+
+    if best_match_id:
+        return best_match_id, 'medium' if best_match_depth >= 2 else 'low'
+    return None, None
+```
+
+### Layer 3: Keyword-based classification from title + description
+
+Use Claude's understanding of the product to classify it. **Do not use a hardcoded keyword map.** Instead, Claude should:
+1. Read the product title and description
+2. Determine what the product IS (its main function)
+3. Search the loaded taxonomy for the most specific matching category
+4. Return the numeric ID
+
+This is where Claude's language understanding matters — it can classify a "Kimono-bademantel Scenario 350 G/m² Für Erwachsene" as a bathrobe (GPC 2302) regardless of language, because it understands German.
+
+### Layer 4: No match found
+
+If no category fits well, leave empty. A wrong GPC is worse than no GPC.
+
+## Step 4: Post-classification validation
+
+**Every GPC assignment must pass validation before output.** This is the critical step that prevents the "BH on a children's T-shirt" problem.
+
+```python
+def validate_gpc(gpc_id, title, product_type, age_group='', gender=''):
+    """Validate a NEWLY ASSIGNED GPC before accepting it.
+    Only used for GPCs that this skill assigns — never for existing merchant GPCs.
+    Returns (validated_gpc, reason). Empty string if invalid."""
+    if not gpc_id:
+        return '', 'no_gpc'
+
+    gpc_str = str(gpc_id).strip()
+
+    # CHECK 1: Does this GPC exist in the taxonomy?
+    if gpc_str not in taxonomy:
+        return '', f'gpc_not_in_taxonomy: {gpc_str} is not a valid Google category ID'
+
+    # CHECK 2: Get the full path and top-level category
+    gpc_path = taxonomy[gpc_str]
+    gpc_top = top_level_map[gpc_str]
+    gpc_path_lower = gpc_path.lower()
+    title_lower = str(title).lower()
+    ptype_lower = str(product_type).lower()
+    context = f"{title_lower} {ptype_lower}"
+    age = str(age_group).lower().strip()
+
+    # CHECK 3: Top-level category coherence
+    # If the product is clearly in one vertical but got a GPC from another, that's wrong.
+    # Example: a bedsheet (Home & Garden) should not get an Apparel GPC.
+    VERTICAL_SIGNALS = {
+        'Apparel & Accessories': ['shirt', 'blouse', 'dress', 'pants', 'jeans', 'jacket', 'coat',
+            'shoe', 'sneaker', 'boot', 'sock', 'underwear', 'bra', 'lingerie', 'hat', 'scarf',
+            'kleid', 'hose', 'jacke', 'schuh', 'hemd', 'jurk', 'broek', 'jas', 'schoen'],
+        'Home & Garden': ['curtain', 'bedding', 'pillow', 'mattress', 'towel', 'rug', 'carpet',
+            'candle', 'vase', 'lamp', 'sofa', 'chair', 'table', 'shelf', 'cabinet',
+            'vorhang', 'kissen', 'matratze', 'teppich', 'gardine', 'bettbezug', 'spannbett',
+            'gordijn', 'kussen', 'matras', 'tapijt', 'dekbed', 'laken', 'handdoek'],
+        'Furniture': ['sofa', 'couch', 'bed ', 'desk', 'bookcase', 'wardrobe', 'dresser',
+            'bett', 'schreibtisch', 'schrank', 'regal', 'bank', 'kast', 'bureau'],
+    }
+
+    # Determine what vertical the PRODUCT belongs to (from title/product_type)
+    product_vertical = None
+    for vertical, signals in VERTICAL_SIGNALS.items():
+        if any(sig in context for sig in signals):
+            product_vertical = vertical
+            break
+
+    # If we detected a vertical AND the GPC top-level doesn't match, flag it
+    if product_vertical and gpc_top != product_vertical:
+        # Special cases: Furniture is a subset of Home & Garden in some contexts
+        if not (product_vertical == 'Furniture' and gpc_top == 'Home & Garden'):
+            if not (product_vertical == 'Home & Garden' and gpc_top == 'Furniture'):
+                return '', f'gpc_vertical_mismatch: product seems like {product_vertical} but GPC is in {gpc_top}'
+
+    # CHECK 4: Age-restricted categories
+    # Lingerie, adult underwear, nightwear → not for children
+    ADULT_ONLY_PATHS = ['lingerie', 'underwear > bra', 'sleepwear & loungewear > nightgown']
+    if age in ('kids', 'infant', 'toddler', 'newborn'):
+        if any(adult_path in gpc_path_lower for adult_path in ADULT_ONLY_PATHS):
+            return '', f'gpc_age_mismatch: age_group={age} but GPC path contains adult-only category'
+
+    # CHECK 5: GPC numeric format
+    if not gpc_str.isdigit():
+        return '', f'gpc_not_numeric: {gpc_str}'
+
+    return gpc_str, 'valid'
+```
+
+## Step 5: Apply and build supplemental feed
 
 ```python
 id_col = next((c for c in df.columns if c in ['id', 'unique merchant sku', 'merchant item id']), None)
 title_col = next((c for c in df.columns if c in ['title', 'titel', 'product name']), None)
 desc_col = next((c for c in df.columns if c in ['description', 'beschrijving', 'product description']), None)
-ptype_col = next((c for c in df.columns if c in ['product_type', 'producttype']), None)
-label_col = next((c for c in df.columns if c in ['labels', 'aangepast label 1', 'custom_label_0']), None)
-gpc_col = next((c for c in df.columns if c in ['google_product_category', 'google productcategorie']), None)
+ptype_col = next((c for c in df.columns if c in ['product_type', 'producttype', 'product type']), None)
+gpc_col = next((c for c in df.columns if c in ['google_product_category', 'google productcategorie', 'google product category']), None)
+age_col = next((c for c in df.columns if c in ['age_group', 'age group', 'leeftijdsgroep']), None)
+gender_col = next((c for c in df.columns if c in ['gender', 'geslacht']), None)
 
-# Build learned map from existing data
-learned_map = build_category_map_from_feed(df, gpc_col, ptype_col, title_col)
+learned_map = build_learned_map(df, gpc_col, ptype_col, title_col)
 
 results = {'classified': 0, 'unresolved': 0, 'already_had': 0}
 gpc_values = []
 
 for idx, row in df.iterrows():
-    if gpc_col:
-        current = str(row[gpc_col]).strip() if pd.notna(row[gpc_col]) else ''
-        if current and current.lower() not in ['', 'nan', 'none']:
-            results['already_had'] += 1
-            gpc_values.append(current)
-            continue
+    # Check existing value — NEVER touch existing GPCs, always keep as-is
+    existing = str(row.get(gpc_col, '')).strip() if gpc_col else ''
+    if existing and existing.lower() not in ['', 'nan', 'none']:
+        gpc_values.append(existing)
+        results['already_had'] += 1
+        continue
 
-    cat, source, confidence = classify_product(
-        row.get(title_col, ''), row.get(desc_col, ''),
-        row.get(ptype_col, ''), row.get(label_col, ''),
-        '', learned_map)
+    # Classify using cascade
+    cat = None
 
-    gpc_values.append(cat)
+    # Layer 1: Learned map
+    ptype = str(row.get(ptype_col, '')).lower().strip() if ptype_col else ''
+    if ptype in learned_map:
+        cat = learned_map[ptype]
+
+    # Layer 2: Product type → taxonomy matching
+    if not cat and ptype_col:
+        cat, conf = match_product_type_to_taxonomy(row.get(ptype_col, ''))
+
+    # Layer 3: Claude's classification based on title + description
+    # (Claude applies its understanding of the product here)
+
+    # Validate before accepting
     if cat:
-        results['classified'] += 1
+        validated, reason = validate_gpc(
+            cat,
+            row.get(title_col, ''),
+            row.get(ptype_col, ''),
+            row.get(age_col, '') if age_col else '',
+            row.get(gender_col, '') if gender_col else ''
+        )
+        if validated:
+            gpc_values.append(validated)
+            results['classified'] += 1
+        else:
+            gpc_values.append('')
+            results['cleared'] += 1
     else:
+        gpc_values.append('')
         results['unresolved'] += 1
 
 supplemental = pd.DataFrame({
@@ -290,41 +299,31 @@ output_path = "/mnt/user-data/outputs/supplemental_feed_google_product_category.
 supplemental.to_excel(output_path, index=False)
 ```
 
-### Step 4: Report
+## Step 6: Report
 
 Present summary with:
 - Fill rate before/after
-- Distribution of assigned categories (top 10)
-- Sample of classified products for spot-checking
+- How many products already had GPCs (kept as-is)
+- Distribution of newly assigned categories (top 10 with taxonomy paths)
 - Products that couldn't be classified (need manual review)
-- Highlight any products that got broad categories where a more specific one might exist
+- Newly assigned GPCs that were cleared by validation and why
 
 ## Important guardrails
 
-- Never overwrite existing google_product_category values
+- **Never overwrite existing google_product_category values.** If the merchant already has a GPC, keep it as-is, always. Even if it looks wrong — it's the merchant's data. This skill only fills empty cells.
+- **Always fetch and use the official taxonomy.** Never classify from memory or hardcoded lists. The taxonomy is the single source of truth.
+- **Always validate newly assigned GPCs.** Every GPC that this skill assigns must pass validation against the taxonomy. A wrong GPC is worse than no GPC.
 - OUTPUT NUMERIC IDs (not text paths) — they are stable, language-neutral, and unambiguous
 - Always choose the MOST SPECIFIC category possible — "Shoes > Athletic Shoes" beats "Shoes"
 - Classify by MAIN FUNCTION, not marketing angle ("gaming chair" = Furniture > Chairs)
-- If no category fits well, leave empty — a wrong category is worse than no category
-- Google auto-assigns categories anyway — this skill is for overriding incorrect auto-assignments
-- The keyword map in this skill covers common Dutch webshop products but is not exhaustive — expand it based on the specific feed being processed
-- For feeds with many unique product types, the "learn from existing data" strategy is the most powerful approach
-
-## Extending the keyword map
-
-The KEYWORD_CATEGORY_MAP in this skill covers the most common product types but will need expanding for niche feeds. When processing a new feed:
-
-1. Check which product_types exist in the feed
-2. Look up the most specific Google category for each product_type
-3. Add new keyword → category mappings as needed
-4. The learned_map strategy automatically handles this for feeds with partial categorization
+- If no category fits well, leave empty — Google auto-assigns categories anyway
+- The learned_map strategy (Layer 1) is the most reliable — it uses the merchant's own existing categorization
+- **Clearing a wrong value is always better than keeping it.** An empty cell means Google falls back to auto-classification. A wrong cell actively misleads.
 
 ## Output format
-
-The output is ALWAYS a supplemental feed — never a full copy of the original feed.
 
 - **Single attribute**: 2 columns → `id` + `google_product_category`
 - Values should be numeric IDs (e.g., `3580`) not text paths
 - Column names are always the **English Google Merchant Center attribute names**
-- Format: **Excel (.xlsx)** — user can upload to Google Drive where it automatically converts to a Google Sheet
+- Format: **Excel (.xlsx)**
 - Include ALL products (also empty ones)
