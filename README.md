@@ -50,7 +50,7 @@ No code. No API setup. No spreadsheet formulas. Just upload and go.
 
 ## Key Features
 
-🌍 **Works in any language** — Tested on Dutch, English, and Romanian feeds. Claude understands any input; the skills control the output language.
+🌍 **Works in any language** — Claude understands any input; the skills control the output language.
 
 🔒 **Never overwrites good data** — Existing attributes stay untouched. Only empty or poor-quality fields get enriched.
 
